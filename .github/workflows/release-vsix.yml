@@ -3,10 +3,6 @@ name: Build and Release VSIX
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag to create (for example, v0.0.32)
-        required: true
-        type: string
       prerelease:
         description: Mark this release as a prerelease
         required: false
@@ -33,6 +29,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Determine release tag
+        id: version
+        run: |
+          version=$(node -p "require('./package-lock.json').version")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
       - name: Build VSIX
         run: npm run package
 
@@ -47,7 +49,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ inputs.prerelease }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           prerelease_flag=""
           if [[ "$PRERELEASE" == "true" ]]; then
