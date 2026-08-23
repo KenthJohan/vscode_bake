@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.32",
+  "version": "0.0.39",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -53,14 +53,19 @@
         "title": "Open Bake Project"
       },
       {
-        "command": "bakeProjects.rebuild",
-        "title": "Bake: Rebuild",
+        "command": "bakeProjects.run",
+        "title": "Bake: Run",
+        "icon": "$(play)"
+      },
+      {
+        "command": "bakeProjects.buildRecursive",
+        "title": "Bake: Build Recursive",
         "icon": "$(tools)"
       },
       {
-        "command": "bakeProjects.runRecursive",
-        "title": "Bake: Run Recursive",
-        "icon": "$(run-all)"
+        "command": "bakeProjects.rebuild",
+        "title": "Bake: Rebuild",
+        "icon": "$(sync)"
       },
       {
         "command": "bakeProjects.rebuildRecursive",
@@ -93,24 +98,29 @@
           "group": "navigation"
         },
         {
-          "command": "bakeProjects.rebuild",
+          "command": "bakeProjects.run",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@1"
         },
         {
-          "command": "bakeProjects.runRecursive",
+          "command": "bakeProjects.buildRecursive",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@2"
         },
         {
-          "command": "bakeProjects.rebuildRecursive",
+          "command": "bakeProjects.rebuild",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@3"
         },
         {
-          "command": "bakeProjects.uninstall",
+          "command": "bakeProjects.rebuildRecursive",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@4"
+        },
+        {
+          "command": "bakeProjects.uninstall",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "inline@5"
         }
       ],
       "explorer/context": [

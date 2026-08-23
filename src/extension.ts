@@ -548,11 +548,14 @@ export function activate(context: vscode.ExtensionContext): void {
                 true
             );
         }),
+        vscode.commands.registerCommand("bakeProjects.run", (project: BakeProject) =>
+            runBake(project, ["run"])
+        ),
+        vscode.commands.registerCommand("bakeProjects.buildRecursive", (project: BakeProject) =>
+            runBake(project, ["build", "-r"])
+        ),
         vscode.commands.registerCommand("bakeProjects.rebuild", (project: BakeProject) =>
             runBake(project, ["rebuild"])
-        ),
-        vscode.commands.registerCommand("bakeProjects.runRecursive", (project: BakeProject) =>
-            runBake(project, ["-r"])
         ),
         vscode.commands.registerCommand("bakeProjects.rebuildRecursive", (project: BakeProject) =>
             runBake(project, ["rebuild", "-r"])
