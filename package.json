@@ -1,0 +1,137 @@
+{
+  "name": "bake-projects",
+  "displayName": "Bake Projects",
+  "description": "Browse Bake projects installed in your home directory.",
+  "version": "0.0.32",
+  "publisher": "bake-projects",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KenthJohan/vscode_bake.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KenthJohan/vscode_bake/issues"
+  },
+  "homepage": "https://github.com/KenthJohan/vscode_bake#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:bakeProjects.explorer",
+    "onCommand:bakeProjects.setCurrentProject"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "bakeProjects",
+          "title": "Bake Projects",
+          "icon": "resources/bake.svg"
+        }
+      ]
+    },
+    "views": {
+      "bakeProjects": [
+        {
+          "id": "bakeProjects.explorer",
+          "name": "Installed Projects"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "bakeProjects.refresh",
+        "title": "Refresh Bake Projects",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "bakeProjects.open",
+        "title": "Open Bake Project"
+      },
+      {
+        "command": "bakeProjects.rebuild",
+        "title": "Bake: Rebuild",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "bakeProjects.runRecursive",
+        "title": "Bake: Run Recursive",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "bakeProjects.rebuildRecursive",
+        "title": "Bake: Rebuild Recursive",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "bakeProjects.uninstall",
+        "title": "Bake: Uninstall",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "bakeProjects.setCurrentProject",
+        "title": "Bake: Set as Current Project",
+        "icon": "$(star-full)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "bakeProjects.refresh",
+          "when": "view == bakeProjects.explorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "bakeProjects.open",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "navigation"
+        },
+        {
+          "command": "bakeProjects.rebuild",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "inline@1"
+        },
+        {
+          "command": "bakeProjects.runRecursive",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "inline@2"
+        },
+        {
+          "command": "bakeProjects.rebuildRecursive",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "inline@3"
+        },
+        {
+          "command": "bakeProjects.uninstall",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "inline@4"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "bakeProjects.setCurrentProject",
+          "when": "resourceFilename == project.json",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx --yes @vscode/vsce package",
+    "package:install": "bash scripts/package-vsix.sh patch"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
