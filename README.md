@@ -1,5 +1,97 @@
 # Bake Projects
 
+A VS Code extension for browsing and working with Bake projects from your local Bake installation.
+
+## Features
+
+- Lists installed Bake projects from `${env:HOME}/bake/meta/*/project.json`
+- Groups projects by their `type` or `kind` value from `project.json`
+- Shows each project's identity, version, summary, language, and metadata fields
+- Opens a project in a new VS Code window using its resolved project location
+- Lets you run common Bake commands directly from each project row
+- Tracks a workspace-specific current project selected from a local `project.json`
+- Highlights the current project and the transitive dependency chain used by it
+- Expands project dependencies from the `use` field and keeps walking recursively
+- Supports uninstalling a project from the extension UI
+- Refreshes the project list when the Bake metadata directory changes
+
+## What the extension shows
+
+The Bake Projects view appears in the Activity Bar as a dedicated panel named "Bake Projects". It scans the Bake metadata directory and creates one row per discovered project.
+
+Each project row displays:
+
+- the project name, using `id`, `name`, `title`, or `projectName` from `project.json`
+- the project description, if available
+- an active or dependency status when relevant
+- the project type, language, and metadata details when expanded
+
+Project rows are grouped by type, and the active project is shown above the groups.
+
+## Project location resolution
+
+When you open a project, the extension resolves its actual location by:
+
+1. checking `project.json` for a `location` field
+2. falling back to `project.json`'s nested `value.location` if present
+3. otherwise reading `source.txt` under the project metadata directory
+4. finally falling back to the metadata directory itself
+
+This makes project opening work reliably both for projects with explicit paths and for projects discovered via Bake metadata.
+
+## Current project support
+
+Right-click a local `project.json` file in the Explorer and choose "Bake: Set as Current Project".
+
+The selected project is saved per workspace and treated as the active project even if it is not currently installed under `${env:HOME}/bake/meta`.
+
+The active project is shown with a star icon and a status label of "Active". If the project is installed under Bake metadata, it stays in its type group and still appears at the top of the list.
+
+## Dependency tracing
+
+When a current project is available, the extension reads its `use` field and follows dependencies recursively.
+
+- direct dependencies are shown when expanding a project
+- transitive dependencies are also discovered through nested `use` entries
+- dependency rows are marked with "Used by Active" in green
+- expanding a dependency continues walking its own dependencies
+- refresh clears and recalculates those highlights from the current project
+
+This makes it easy to understand which projects are part of the active project's dependency tree.
+
+## Commands available in the project tree
+
+Each project row exposes commands in the view and inline actions:
+
+- Open Bake Project
+- Bake: Run
+- Bake: Build Recursive
+- Bake: Rebuild
+- Bake: Rebuild Recursive
+- Bake: Uninstall
+- Refresh Bake Projects
+
+Each command runs in a VS Code terminal using the project's filesystem location.
+
+### Terminal commands used by the extension
+
+- `bake run <location>`
+- `bake build -r <location>`
+- `bake rebuild <location>`
+- `bake rebuild -r <location>`
+- `bake uninstall <project-id>`
+
+The rebuild and uninstall actions use shell-safe quoting for the project path or identifier.
+
+## How to use it
+
+1. Install the extension.
+2. Open the Bake Projects view in the Activity Bar.
+3. Browse installed projects by type.
+4. Expand a project to inspect metadata and dependency relationships.
+5. Click the project buttons or menu actions to open, rebuild, run, or uninstall it.
+6. Select a local `project.json` from the Explorer to mark a project as the active workspace project.
+
 ## Development
 
 Install the project dependencies, then compile the extension:
@@ -21,34 +113,8 @@ To compile, create a new VSIX, install it in VS Code, and reload the window:
 npm run package:install
 ```
 
-This bumps the patch version before packaging. To create a VSIX without
-installing it, use `npm run package`.
+This bumps the patch version before packaging. To create a VSIX without installing it, use:
 
-The Bake Projects activity-bar icon lists projects found at
-`${env:HOME}/bake/meta/*/project.json`. Each project row shows its Bake ID,
-type, and language where present. Projects are grouped by their `type` from
-`project.json`; expand a group, then a project, to see its metadata. Use the
-open action to open its project location in a new VS Code window. The location
-uses `project.json`'s `location` field when present, otherwise Bake's
-`source.txt` metadata.
-
-Use the refresh icon in the view title to rescan the directory.
-
-Each project row has buttons that run these commands in a VS Code terminal:
-
-- `bake rebuild <location>`
-- `bake -r <location>`
-- `bake rebuild -r <location>`
-
-Right-click a `project.json` file in the Explorer and select **Bake: Set as
-Current Project**. The selected project is marked **Active** in the Bake
-Projects view for that workspace, even when it is not installed under the Bake
-metadata directory. It appears above the type groups and remains in its type
-group when it is installed there.
-
-Expand a project to walk its dependencies. The extension reads the `use` field
-from `project.json` when the project list is loaded or refreshed and when a
-project is expanded. The all-projects view highlights the active project's
-transitive dependencies recursively as green **Used by Active** rows. Refresh
-recalculates the highlights, and expanding a dependency continues walking its
-own dependencies.
+```bash
+npm run package
+```
