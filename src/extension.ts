@@ -3,9 +3,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
-const BAKE_DIRECTORY = path.join(os.homedir(), "bake");
-const BAKE_METADATA_DIRECTORY = path.join(BAKE_DIRECTORY, "meta");
 const BUILD_TOOL_CONFIGURATION_KEY = "buildTool";
+const DIRECTORY_CONFIGURATION_KEY = "directory";
+const DEFAULT_BAKE_DIRECTORY_NAME = "bake3";
 const CURRENT_PROJECT_ID_KEY = "currentProjectId";
 const CURRENT_PROJECT_PATH_KEY = "currentProjectPath";
 
@@ -111,8 +111,9 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
         }
 
         if (element instanceof BakeProject) {
+            const dependencies = await this.projectDependencies(element);
             return [
-                ...(await this.projectDependencies(element)),
+                ...(dependencies.length > 0 ? [new ProjectGroup("use", dependencies)] : []),
                 ...projectDetails(element)
             ];
         }
@@ -121,12 +122,14 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
             return [];
         }
 
+        const metadataDirectory = bakeMetadataDirectory();
+
         try {
-            const entries = await fs.readdir(BAKE_METADATA_DIRECTORY, { withFileTypes: true });
+            const entries = await fs.readdir(metadataDirectory, { withFileTypes: true });
             const projects = await Promise.all(
                 entries
                     .filter((entry) => entry.isDirectory())
-                    .map((entry) => readProject(path.join(BAKE_METADATA_DIRECTORY, entry.name)))
+                    .map((entry) => readProject(path.join(metadataDirectory, entry.name)))
             );
 
             const validProjects = projects.filter((project): project is BakeProject => project !== undefined);
@@ -182,7 +185,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
             }
 
             void vscode.window.showErrorMessage(
-                `Unable to read Bake projects in ${BAKE_METADATA_DIRECTORY}: ${formatError(error)}`
+                `Unable to read Bake projects in ${metadataDirectory}: ${formatError(error)}`
             );
             return [];
         }
@@ -495,8 +498,11 @@ function textValue(value: unknown): string | undefined {
         return String(value);
     }
 
-    if (isRecord(value) && typeof value.name === "string" && value.name.trim()) {
-        return value.name.trim();
+    if (isRecord(value)) {
+        const identifier = firstText(value, ["name", "id", "project"]);
+        if (identifier) {
+            return identifier;
+        }
     }
 
     return undefined;
@@ -541,6 +547,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         vscode.window.registerTreeDataProvider("bakeProjects.explorer", provider),
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration(`bakeProjects.${DIRECTORY_CONFIGURATION_KEY}`)) {
+                provider.refresh();
+            }
+        }),
         vscode.commands.registerCommand("bakeProjects.refresh", () => provider.refresh()),
         vscode.commands.registerCommand("bakeProjects.open", async (project: BakeProject) => {
             await vscode.commands.executeCommand(
@@ -646,6 +657,16 @@ function buildTool(): "bake" | "bake3" {
     return vscode.workspace.getConfiguration("bakeProjects").get<string>(BUILD_TOOL_CONFIGURATION_KEY) === "bake3"
         ? "bake3"
         : "bake";
+}
+
+function bakeDirectory(): string {
+    const configured = vscode.workspace.getConfiguration("bakeProjects").get<string>(DIRECTORY_CONFIGURATION_KEY);
+    const directoryName = configured?.trim() || DEFAULT_BAKE_DIRECTORY_NAME;
+    return path.isAbsolute(directoryName) ? directoryName : path.join(os.homedir(), directoryName);
+}
+
+function bakeMetadataDirectory(): string {
+    return path.join(bakeDirectory(), "meta");
 }
 
 export function deactivate(): void {}

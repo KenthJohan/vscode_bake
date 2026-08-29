@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.40",
+  "version": "0.0.42",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -36,6 +36,11 @@
           ],
           "default": "bake",
           "description": "The Bake build tool to use when running project commands."
+        },
+        "bakeProjects.directory": {
+          "type": "string",
+          "default": "bake3",
+          "description": "The name of the Bake directory under your home directory that contains the 'meta' folder (e.g. bake or bake3)."
         }
       }
     },
