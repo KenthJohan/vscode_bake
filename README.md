@@ -12,7 +12,7 @@ A VS Code extension for browsing and working with Bake projects from your local 
 - Tracks a workspace-specific current project selected from a local `project.json`
 - Highlights the current project and the transitive dependency chain used by it
 - Expands project dependencies from the `use` field and keeps walking recursively
-- Shows installed libraries listed in language-specific `lib` fields, such as `lang.c.lib`
+- Shows installed libraries listed in language-specific `lib` fields, such as `lang.c.lib`, marking missing libraries as "not found"
 - Displays root groups for **LD_LIBRARY_PATH** and **System Library Path** to inspect and open configured library directories
 - Right-click library items or library path entries to open their location in the system file explorer
 - Supports uninstalling a project from the extension UI

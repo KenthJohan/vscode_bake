@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.55",
+  "version": "0.0.57",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {

@@ -116,13 +116,21 @@ class ProjectDetail extends vscode.TreeItem {
 class LibraryReference extends vscode.TreeItem {
     public constructor(
         public readonly name: string,
-        public readonly project?: BakeProject
+        public readonly project?: BakeProject,
+        public readonly exists: boolean = true,
+        public readonly resolvedPath?: string
     ) {
         super(name, vscode.TreeItemCollapsibleState.None);
 
         this.contextValue = "bakeLibrary";
-        this.tooltip = `Library: ${name}`;
-        this.iconPath = new vscode.ThemeIcon("library");
+        this.description = exists ? undefined : "not found";
+        this.tooltip = exists
+            ? (resolvedPath ? `Library: ${name}\nPath: ${resolvedPath}` : `Library: ${name}`)
+            : `Library: ${name} (not found)`;
+        this.iconPath = new vscode.ThemeIcon(
+            "library",
+            exists ? undefined : new vscode.ThemeColor("testing.iconFailed")
+        );
     }
 }
 
@@ -170,7 +178,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
 
         if (element instanceof BakeProject) {
             const dependencies = await this.projectDependencies(element);
-            const libraries = this.projectLibraries(element);
+            const libraries = await this.projectLibraries(element);
             return [
                 ...(dependencies.length > 0 ? [new ProjectGroup("use", dependencies)] : []),
                 ...(libraries.length > 0 ? [new ProjectGroup("lib", libraries, "libraries")] : []),
@@ -258,8 +266,21 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
         return this.projectReferences(project, projectUseIds(project.metadata));
     }
 
-    private projectLibraries(project: BakeProject): LibraryReference[] {
-        return [...projectLibIds(project.metadata)].map((library) => new LibraryReference(library, project));
+    private async projectLibraries(project: BakeProject): Promise<LibraryReference[]> {
+        const libNames = [...projectLibIds(project.metadata)];
+        if (libNames.length === 0) {
+            return [];
+        }
+
+        const candidateDirs = await getCandidateLibraryDirectories(project);
+        const dirFilesMap = new Map<string, string[]>();
+
+        return Promise.all(
+            libNames.map(async (name) => {
+                const resolved = await findLibraryFile(name, project, candidateDirs, dirFilesMap);
+                return new LibraryReference(name, project, resolved !== undefined, resolved);
+            })
+        );
     }
 
     private async projectReferences(project: BakeProject, projectIds: Set<string>): Promise<BakeProject[]> {
@@ -797,28 +818,11 @@ async function openLibraryFolder(library: LibraryReference): Promise<void> {
         return;
     }
 
-    const expandedDirectPath = expandPath(libraryName, library.project);
-    try {
-        const stat = await fs.stat(expandedDirectPath);
-        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(expandedDirectPath));
-        return;
-    } catch {
-        // Not a direct path, proceed to library path resolution
-    }
+    const candidateDirs = await getCandidateLibraryDirectories(library.project);
+    const resolvedPath = await findLibraryFile(libraryName, library.project, candidateDirs);
 
-    const ldDirs = await getLdLibraryPathDirectories(library.project);
-    const sysDirs = getSystemLibraryPathDirectories(library.project);
-    const candidateDirs = [...ldDirs];
-    for (const sysDir of sysDirs) {
-        if (!candidateDirs.includes(sysDir)) {
-            candidateDirs.push(sysDir);
-        }
-    }
-
-    if (candidateDirs.length === 0) {
-        void vscode.window.showErrorMessage(
-            "LD_LIBRARY_PATH is not set in extension settings (bakeProjects.ldLibraryPath), environment, or launch.json."
-        );
+    if (resolvedPath) {
+        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(resolvedPath));
         return;
     }
 
@@ -826,21 +830,11 @@ async function openLibraryFolder(library: LibraryReference): Promise<void> {
     for (const dir of candidateDirs) {
         try {
             const stat = await fs.stat(dir);
-            if (!stat.isDirectory()) {
-                continue;
-            }
-            existingDirs.push(dir);
-
-            const files = await fs.readdir(dir);
-            for (const file of files) {
-                if (isLibraryMatch(file, libraryName)) {
-                    const libraryFilePath = path.join(dir, file);
-                    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(libraryFilePath));
-                    return;
-                }
+            if (stat.isDirectory()) {
+                existingDirs.push(dir);
             }
         } catch {
-            // Skip directory on error
+            // Skip
         }
     }
 
@@ -853,6 +847,60 @@ async function openLibraryFolder(library: LibraryReference): Promise<void> {
             `None of the library directories exist. Checked paths:\n${candidateDirs.join("\n")}`
         );
     }
+}
+
+async function getCandidateLibraryDirectories(project?: BakeProject): Promise<string[]> {
+    const ldDirs = await getLdLibraryPathDirectories(project);
+    const sysDirs = getSystemLibraryPathDirectories(project);
+    const candidateDirs = [...ldDirs];
+    for (const sysDir of sysDirs) {
+        if (!candidateDirs.includes(sysDir)) {
+            candidateDirs.push(sysDir);
+        }
+    }
+    return candidateDirs;
+}
+
+async function findLibraryFile(
+    libraryName: string,
+    project?: BakeProject,
+    candidateDirs?: string[],
+    dirFilesMap?: Map<string, string[]>
+): Promise<string | undefined> {
+    const expandedDirectPath = expandPath(libraryName, project);
+    try {
+        await fs.stat(expandedDirectPath);
+        return expandedDirectPath;
+    } catch {
+        // Not a direct path
+    }
+
+    const dirs = candidateDirs ?? (await getCandidateLibraryDirectories(project));
+
+    for (const dir of dirs) {
+        try {
+            let files: string[] | undefined = dirFilesMap?.get(dir);
+            if (!files) {
+                const stat = await fs.stat(dir);
+                if (!stat.isDirectory()) {
+                    continue;
+                }
+                const readFiles = await fs.readdir(dir);
+                files = readFiles;
+                dirFilesMap?.set(dir, readFiles);
+            }
+
+            for (const file of files) {
+                if (isLibraryMatch(file, libraryName)) {
+                    return path.join(dir, file);
+                }
+            }
+        } catch {
+            // Skip directory on error
+        }
+    }
+
+    return undefined;
 }
 
 interface LdLibraryPathEntry {
