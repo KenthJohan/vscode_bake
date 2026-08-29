@@ -5,6 +5,8 @@ import * as vscode from "vscode";
 
 const BUILD_TOOL_CONFIGURATION_KEY = "buildTool";
 const DIRECTORY_CONFIGURATION_KEY = "directory";
+const LD_LIBRARY_PATH_CONFIGURATION_KEY = "ldLibraryPath";
+const SYSTEM_LIBRARY_PATH_CONFIGURATION_KEY = "systemLibraryPath";
 const DEFAULT_BAKE_DIRECTORY_NAME = "bake3";
 const CURRENT_PROJECT_ID_KEY = "currentProjectId";
 const CURRENT_PROJECT_PATH_KEY = "currentProjectPath";
@@ -43,7 +45,13 @@ class BakeProject extends vscode.TreeItem {
     }
 }
 
-type BakeTreeItem = ProjectGroup | BakeProject | ProjectDetail | LibraryReference;
+type BakeTreeItem =
+    | ProjectGroup
+    | BakeProject
+    | ProjectDetail
+    | LibraryReference
+    | LibraryPathGroup
+    | LibraryPathItem;
 
 class ProjectGroup extends vscode.TreeItem {
     public constructor(
@@ -59,6 +67,42 @@ class ProjectGroup extends vscode.TreeItem {
     }
 }
 
+class LibraryPathGroup extends vscode.TreeItem {
+    public constructor(
+        public readonly title: string,
+        public readonly children: LibraryPathItem[],
+        iconName: string = "folder-library"
+    ) {
+        super(title, vscode.TreeItemCollapsibleState.Collapsed);
+
+        this.description = `${children.length} ${children.length === 1 ? "directory" : "directories"}`;
+        this.tooltip = `${title} (${children.length} directories)`;
+        this.iconPath = new vscode.ThemeIcon(iconName);
+    }
+}
+
+class LibraryPathItem extends vscode.TreeItem {
+    public constructor(
+        public readonly dirPath: string,
+        public readonly exists: boolean
+    ) {
+        super(dirPath, vscode.TreeItemCollapsibleState.None);
+
+        this.contextValue = "bakeLibraryPathItem";
+        this.tooltip = `${dirPath}${exists ? " (directory exists)" : " (directory does not exist)"}`;
+        this.description = exists ? undefined : "not found";
+        this.iconPath = new vscode.ThemeIcon(
+            exists ? "folder" : "folder-active",
+            exists ? undefined : new vscode.ThemeColor("testing.iconFailed")
+        );
+        this.command = {
+            command: "bakeProjects.openPathInOS",
+            title: "Open Folder in OS",
+            arguments: [dirPath]
+        };
+    }
+}
+
 class ProjectDetail extends vscode.TreeItem {
     public constructor(label: string, value: string, icon: string) {
         super(label, vscode.TreeItemCollapsibleState.None);
@@ -70,9 +114,13 @@ class ProjectDetail extends vscode.TreeItem {
 }
 
 class LibraryReference extends vscode.TreeItem {
-    public constructor(name: string) {
+    public constructor(
+        public readonly name: string,
+        public readonly project?: BakeProject
+    ) {
         super(name, vscode.TreeItemCollapsibleState.None);
 
+        this.contextValue = "bakeLibrary";
         this.tooltip = `Library: ${name}`;
         this.iconPath = new vscode.ThemeIcon("library");
     }
@@ -116,7 +164,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
     }
 
     public async getChildren(element?: BakeTreeItem): Promise<BakeTreeItem[]> {
-        if (element instanceof ProjectGroup) {
+        if (element instanceof ProjectGroup || element instanceof LibraryPathGroup) {
             return element.children;
         }
 
@@ -135,6 +183,9 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
         }
 
         const metadataDirectory = bakeMetadataDirectory();
+        let decoratedProjects: BakeProject[] = [];
+        let decoratedCurrentProject: BakeProject | undefined;
+        let currentProject: BakeProject | undefined;
 
         try {
             const entries = await fs.readdir(metadataDirectory, { withFileTypes: true });
@@ -145,7 +196,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
             );
 
             const validProjects = projects.filter((project): project is BakeProject => project !== undefined);
-            let currentProject = validProjects.find(
+            currentProject = validProjects.find(
                 (project) => !!this.currentProjectId && project.projectId === this.currentProjectId
             );
             if (!currentProject && this.currentProjectPath) {
@@ -165,7 +216,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
             const usedProjectIds = currentProject
                 ? collectDependencyIds(currentProject, this.projectsById)
                 : new Set<string>();
-            const decoratedProjects = allProjects
+            decoratedProjects = allProjects
                 .map(
                     (project) => {
                         const isCurrent = !!this.currentProjectId && project.projectId === this.currentProjectId;
@@ -185,22 +236,22 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
                     }
                 )
                 .sort((left, right) => left.label!.toString().localeCompare(right.label!.toString()));
-            const decoratedCurrentProject = decoratedProjects.find((project) => project.isCurrent);
-
-            return [
-                ...(decoratedCurrentProject ? [decoratedCurrentProject] : []),
-                ...groupProjects(decoratedProjects)
-            ];
+            decoratedCurrentProject = decoratedProjects.find((project) => project.isCurrent);
         } catch (error: unknown) {
-            if (isMissingDirectory(error)) {
-                return [];
+            if (!isMissingDirectory(error)) {
+                void vscode.window.showErrorMessage(
+                    `Unable to read Bake projects in ${metadataDirectory}: ${formatError(error)}`
+                );
             }
-
-            void vscode.window.showErrorMessage(
-                `Unable to read Bake projects in ${metadataDirectory}: ${formatError(error)}`
-            );
-            return [];
         }
+
+        const libraryPathGroups = await getLibraryPathRootGroups(currentProject);
+
+        return [
+            ...(decoratedCurrentProject ? [decoratedCurrentProject] : []),
+            ...groupProjects(decoratedProjects),
+            ...libraryPathGroups
+        ];
     }
 
     private async projectDependencies(project: BakeProject): Promise<BakeProject[]> {
@@ -208,7 +259,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
     }
 
     private projectLibraries(project: BakeProject): LibraryReference[] {
-        return [...projectLibIds(project.metadata)].map((library) => new LibraryReference(library));
+        return [...projectLibIds(project.metadata)].map((library) => new LibraryReference(library, project));
     }
 
     private async projectReferences(project: BakeProject, projectIds: Set<string>): Promise<BakeProject[]> {
@@ -596,7 +647,11 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.window.registerTreeDataProvider("bakeProjects.explorer", provider),
         vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration(`bakeProjects.${DIRECTORY_CONFIGURATION_KEY}`)) {
+            if (
+                event.affectsConfiguration(`bakeProjects.${DIRECTORY_CONFIGURATION_KEY}`) ||
+                event.affectsConfiguration(`bakeProjects.${LD_LIBRARY_PATH_CONFIGURATION_KEY}`) ||
+                event.affectsConfiguration(`bakeProjects.${SYSTEM_LIBRARY_PATH_CONFIGURATION_KEY}`)
+            ) {
                 provider.refresh();
             }
         }),
@@ -607,6 +662,24 @@ export function activate(context: vscode.ExtensionContext): void {
                 vscode.Uri.file(project.location),
                 true
             );
+        }),
+        vscode.commands.registerCommand("bakeProjects.openLibraryFolder", async (library?: LibraryReference) => {
+            if (library instanceof LibraryReference) {
+                await openLibraryFolder(library);
+            }
+        }),
+        vscode.commands.registerCommand("bakeProjects.openPathInOS", async (target?: string | LibraryPathItem) => {
+            const targetPath = typeof target === "string" ? target : target?.dirPath;
+            if (!targetPath) {
+                return;
+            }
+            try {
+                await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(targetPath));
+            } catch (error: unknown) {
+                void vscode.window.showErrorMessage(
+                    `Unable to open directory ${targetPath}: ${formatError(error)}`
+                );
+            }
         }),
         vscode.commands.registerCommand("bakeProjects.run", (project: BakeProject) =>
             runBake(project, ["run"])
@@ -715,6 +788,447 @@ function bakeDirectory(): string {
 
 function bakeMetadataDirectory(): string {
     return path.join(bakeDirectory(), "meta");
+}
+
+async function openLibraryFolder(library: LibraryReference): Promise<void> {
+    const libraryName = library.name;
+    if (!libraryName) {
+        void vscode.window.showErrorMessage("No library name specified.");
+        return;
+    }
+
+    const expandedDirectPath = expandPath(libraryName, library.project);
+    try {
+        const stat = await fs.stat(expandedDirectPath);
+        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(expandedDirectPath));
+        return;
+    } catch {
+        // Not a direct path, proceed to library path resolution
+    }
+
+    const ldDirs = await getLdLibraryPathDirectories(library.project);
+    const sysDirs = getSystemLibraryPathDirectories(library.project);
+    const candidateDirs = [...ldDirs];
+    for (const sysDir of sysDirs) {
+        if (!candidateDirs.includes(sysDir)) {
+            candidateDirs.push(sysDir);
+        }
+    }
+
+    if (candidateDirs.length === 0) {
+        void vscode.window.showErrorMessage(
+            "LD_LIBRARY_PATH is not set in extension settings (bakeProjects.ldLibraryPath), environment, or launch.json."
+        );
+        return;
+    }
+
+    const existingDirs: string[] = [];
+    for (const dir of candidateDirs) {
+        try {
+            const stat = await fs.stat(dir);
+            if (!stat.isDirectory()) {
+                continue;
+            }
+            existingDirs.push(dir);
+
+            const files = await fs.readdir(dir);
+            for (const file of files) {
+                if (isLibraryMatch(file, libraryName)) {
+                    const libraryFilePath = path.join(dir, file);
+                    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(libraryFilePath));
+                    return;
+                }
+            }
+        } catch {
+            // Skip directory on error
+        }
+    }
+
+    if (existingDirs.length > 0) {
+        void vscode.window.showErrorMessage(
+            `Could not find library "${libraryName}" in library directories:\n${existingDirs.join("\n")}`
+        );
+    } else {
+        void vscode.window.showErrorMessage(
+            `None of the library directories exist. Checked paths:\n${candidateDirs.join("\n")}`
+        );
+    }
+}
+
+interface LdLibraryPathEntry {
+    rawPath: string;
+    workspaceFolder?: string;
+}
+
+async function getLibraryPathRootGroups(project?: BakeProject): Promise<LibraryPathGroup[]> {
+    const ldDirs = await getLdLibraryPathDirectories(project);
+    const ldItems = await Promise.all(
+        ldDirs.map(async (dir) => {
+            const exists = await pathExists(dir);
+            return new LibraryPathItem(dir, exists);
+        })
+    );
+    const ldGroup = new LibraryPathGroup("LD_LIBRARY_PATH", ldItems, "library");
+
+    const sysDirs = getSystemLibraryPathDirectories(project);
+    const sysItems = await Promise.all(
+        sysDirs.map(async (dir) => {
+            const exists = await pathExists(dir);
+            return new LibraryPathItem(dir, exists);
+        })
+    );
+    const sysGroup = new LibraryPathGroup("System Library Path", sysItems, "references");
+
+    return [ldGroup, sysGroup];
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+    try {
+        const stat = await fs.stat(targetPath);
+        return stat.isDirectory();
+    } catch {
+        return false;
+    }
+}
+
+async function getLdLibraryPathDirectories(project?: BakeProject): Promise<string[]> {
+    const entries = await getLdLibraryPathEntries(project);
+    return resolveDirectoriesFromEntries(entries, project);
+}
+
+function getSystemLibraryPathDirectories(project?: BakeProject): string[] {
+    const configuredSystemLibraryPath = vscode.workspace
+        .getConfiguration("bakeProjects")
+        .get<string>(SYSTEM_LIBRARY_PATH_CONFIGURATION_KEY);
+
+    if (!configuredSystemLibraryPath || !configuredSystemLibraryPath.trim()) {
+        return [];
+    }
+
+    const entry: LdLibraryPathEntry = {
+        rawPath: configuredSystemLibraryPath.trim(),
+        workspaceFolder: project?.location
+    };
+
+    return resolveDirectoriesFromEntries([entry], project);
+}
+
+function resolveDirectoriesFromEntries(entries: LdLibraryPathEntry[], project?: BakeProject): string[] {
+    const candidateDirs: string[] = [];
+    for (const entry of entries) {
+        const rawPaths = splitPathList(entry.rawPath);
+        for (const rawPath of rawPaths) {
+            const expanded = expandPath(rawPath, project, entry.workspaceFolder);
+            for (const dir of splitPathList(expanded)) {
+                if (dir && !candidateDirs.includes(dir)) {
+                    candidateDirs.push(dir);
+                }
+            }
+        }
+    }
+    return candidateDirs;
+}
+
+function splitPathList(rawPath: string): string[] {
+    const results: string[] = [];
+    let current = "";
+    let insideBrackets = false;
+
+    for (let i = 0; i < rawPath.length; i++) {
+        const char = rawPath[i];
+        const nextChar = rawPath[i + 1];
+
+        if (char === "$" && nextChar === "{") {
+            insideBrackets = true;
+            current += char;
+        } else if (insideBrackets && char === "}") {
+            insideBrackets = false;
+            current += char;
+        } else if (!insideBrackets && (char === ":" || char === ";")) {
+            if (current.trim()) {
+                results.push(current.trim());
+            }
+            current = "";
+        } else {
+            current += char;
+        }
+    }
+
+    if (current.trim()) {
+        results.push(current.trim());
+    }
+
+    return results;
+}
+
+async function getLdLibraryPathEntries(project?: BakeProject): Promise<LdLibraryPathEntry[]> {
+    const entries: LdLibraryPathEntry[] = [];
+
+    const configuredLdLibraryPath = vscode.workspace
+        .getConfiguration("bakeProjects")
+        .get<string>(LD_LIBRARY_PATH_CONFIGURATION_KEY);
+    if (configuredLdLibraryPath && configuredLdLibraryPath.trim()) {
+        entries.push({
+            rawPath: configuredLdLibraryPath.trim(),
+            workspaceFolder: project?.location
+        });
+    }
+
+    if (process.env.LD_LIBRARY_PATH && process.env.LD_LIBRARY_PATH.trim()) {
+        entries.push({
+            rawPath: process.env.LD_LIBRARY_PATH,
+            workspaceFolder: project?.location
+        });
+    }
+
+    const launchJsonPaths = new Set<string>();
+
+    if (vscode.workspace.workspaceFolders) {
+        for (const folder of vscode.workspace.workspaceFolders) {
+            launchJsonPaths.add(path.join(folder.uri.fsPath, ".vscode", "launch.json"));
+        }
+    }
+
+    if (project?.location) {
+        launchJsonPaths.add(path.join(project.location, ".vscode", "launch.json"));
+        launchJsonPaths.add(path.join(project.location, "launch.json"));
+    }
+
+    for (const launchJsonPath of launchJsonPaths) {
+        try {
+            const content = await fs.readFile(launchJsonPath, "utf8");
+            const parsed = parseJsonc(content);
+            const parentDir = path.dirname(launchJsonPath);
+            const targetFolder = path.basename(parentDir) === ".vscode"
+                ? path.dirname(parentDir)
+                : parentDir;
+
+            const values = extractLdLibraryPathFromLaunch(parsed);
+            for (const val of values) {
+                entries.push({
+                    rawPath: val,
+                    workspaceFolder: targetFolder
+                });
+            }
+        } catch {
+            // Skip missing or invalid launch.json
+        }
+    }
+
+    if (entries.length === 0) {
+        try {
+            const launchConfig = vscode.workspace.getConfiguration("launch");
+            const configurations = launchConfig.get<unknown[]>("configurations");
+            if (Array.isArray(configurations)) {
+                const values = extractLdLibraryPathFromLaunch({ configurations });
+                for (const val of values) {
+                    entries.push({
+                        rawPath: val,
+                        workspaceFolder: project?.location || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+                    });
+                }
+            }
+        } catch {
+            // Ignore API lookup errors
+        }
+    }
+
+    return entries;
+}
+
+function extractLdLibraryPathFromLaunch(parsed: unknown): string[] {
+    const results: string[] = [];
+    if (!isRecord(parsed)) {
+        return results;
+    }
+
+    const configurations = parsed.configurations;
+    if (!Array.isArray(configurations)) {
+        return results;
+    }
+
+    for (const config of configurations) {
+        if (!isRecord(config)) {
+            continue;
+        }
+
+        if (Array.isArray(config.environment)) {
+            for (const item of config.environment) {
+                if (isRecord(item) && item.name === "LD_LIBRARY_PATH" && typeof item.value === "string" && item.value.trim()) {
+                    results.push(item.value);
+                }
+            }
+        } else if (isRecord(config.environment)) {
+            if (typeof config.environment.LD_LIBRARY_PATH === "string" && config.environment.LD_LIBRARY_PATH.trim()) {
+                results.push(config.environment.LD_LIBRARY_PATH);
+            }
+        }
+
+        if (isRecord(config.env)) {
+            if (typeof config.env.LD_LIBRARY_PATH === "string" && config.env.LD_LIBRARY_PATH.trim()) {
+                results.push(config.env.LD_LIBRARY_PATH);
+            }
+        }
+    }
+
+    return results;
+}
+
+function parseJsonc(content: string): unknown {
+    const stripped = stripJsonComments(content);
+    return JSON.parse(stripped);
+}
+
+function stripJsonComments(jsonString: string): string {
+    let isInsideString = false;
+    let stringChar = "";
+    let isEscaped = false;
+    let result = "";
+
+    for (let i = 0; i < jsonString.length; i++) {
+        const char = jsonString[i];
+        const nextChar = jsonString[i + 1];
+
+        if (isInsideString) {
+            result += char;
+            if (isEscaped) {
+                isEscaped = false;
+            } else if (char === "\\") {
+                isEscaped = true;
+            } else if (char === stringChar) {
+                isInsideString = false;
+            }
+        } else {
+            if (char === '"' || char === "'") {
+                isInsideString = true;
+                stringChar = char;
+                result += char;
+            } else if (char === "/" && nextChar === "/") {
+                i++;
+                while (i < jsonString.length && jsonString[i] !== "\n" && jsonString[i] !== "\r") {
+                    i++;
+                }
+                if (i < jsonString.length) {
+                    result += jsonString[i];
+                }
+            } else if (char === "/" && nextChar === "*") {
+                i += 2;
+                while (i < jsonString.length - 1 && !(jsonString[i] === "*" && jsonString[i + 1] === "/")) {
+                    i++;
+                }
+                i++;
+            } else {
+                result += char;
+            }
+        }
+    }
+
+    return result.replace(/,(\s*[}\]])/g, "$1");
+}
+
+function expandPath(rawPath: string, project?: BakeProject, targetWorkspaceFolder?: string): string {
+    let expanded = rawPath.trim();
+
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    const defaultWorkspace = targetWorkspaceFolder
+        || (workspaceFolders && workspaceFolders.length > 0 ? workspaceFolders[0].uri.fsPath : undefined)
+        || project?.location;
+
+    expanded = expanded.replace(/\$\{workspaceFolder:([^}]+)\}/g, (_, name: string) => {
+        const matched = workspaceFolders?.find((folder) => folder.name === name);
+        return matched ? matched.uri.fsPath : (defaultWorkspace ?? "");
+    });
+
+    if (defaultWorkspace) {
+        expanded = expanded.replace(/\$\{(workspaceFolder|workspaceRoot)\}/g, defaultWorkspace);
+    }
+
+    expanded = expanded.replace(/\$\{env:([^}]+)\}/g, (_, varName: string) => {
+        if (varName === "HOME" && !process.env.HOME) {
+            return os.homedir();
+        }
+        return process.env[varName] ?? "";
+    });
+
+    expanded = expanded.replace(/\$\{([^}]+)\}/g, (_, varName: string) => {
+        if (varName === "HOME" && !process.env.HOME) {
+            return os.homedir();
+        }
+        return process.env[varName] ?? "";
+    });
+
+    expanded = expanded.replace(/\$([A-Za-z0-9_]+)/g, (_, varName: string) => {
+        if (varName === "HOME" && !process.env.HOME) {
+            return os.homedir();
+        }
+        return process.env[varName] ?? "";
+    });
+
+    if (expanded === "~" || expanded.startsWith("~/")) {
+        expanded = path.join(os.homedir(), expanded.slice(1));
+    }
+
+    if (!path.isAbsolute(expanded)) {
+        const base = defaultWorkspace || process.cwd();
+        expanded = path.resolve(base, expanded);
+    }
+
+    return path.normalize(expanded);
+}
+
+function isLibraryMatch(filename: string, libraryName: string): boolean {
+    const name = libraryName.trim();
+    if (!name || !filename) {
+        return false;
+    }
+
+    if (filename === name) {
+        return true;
+    }
+
+    const baseName = name.replace(/\.(so|a|dylib|dll|lib)(\..*)?$/, "");
+    const stem = baseName.startsWith("lib") ? baseName.slice(3) : baseName;
+
+    const candidates = new Set([
+        name,
+        `lib${name}`,
+        `${baseName}.so`,
+        `${baseName}.a`,
+        `${baseName}.dylib`,
+        `${baseName}.dll`,
+        `${baseName}.lib`,
+        `lib${baseName}.so`,
+        `lib${baseName}.a`,
+        `lib${baseName}.dylib`,
+        `lib${baseName}.dll`,
+        `lib${baseName}.lib`,
+        `${stem}.so`,
+        `${stem}.a`,
+        `lib${stem}.so`,
+        `lib${stem}.a`,
+        `lib${stem}.dylib`
+    ]);
+
+    if (candidates.has(filename)) {
+        return true;
+    }
+
+    const prefixes = [
+        `lib${stem}.so.`,
+        `lib${stem}.a.`,
+        `lib${stem}.dylib.`,
+        `${stem}.so.`,
+        `lib${baseName}.so.`,
+        `${baseName}.so.`
+    ];
+
+    for (const prefix of prefixes) {
+        if (filename.startsWith(prefix)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 export function deactivate(): void {}

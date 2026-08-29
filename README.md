@@ -13,6 +13,8 @@ A VS Code extension for browsing and working with Bake projects from your local 
 - Highlights the current project and the transitive dependency chain used by it
 - Expands project dependencies from the `use` field and keeps walking recursively
 - Shows installed libraries listed in language-specific `lib` fields, such as `lang.c.lib`
+- Displays root groups for **LD_LIBRARY_PATH** and **System Library Path** to inspect and open configured library directories
+- Right-click library items or library path entries to open their location in the system file explorer
 - Supports uninstalling a project from the extension UI
 - Refreshes the project list when the Bake metadata directory changes
 
@@ -85,18 +87,43 @@ Each command runs in a VS Code terminal using the project's filesystem location.
 
 The rebuild and uninstall actions use shell-safe quoting for the project path or identifier.
 
-### Build tool setting
+## Extension Settings
 
-Use the `bakeProjects.buildTool` setting to select the command used by project actions:
+This extension contributes the following settings:
 
-- `bake` (default)
-- `bake3`
+- `bakeProjects.buildTool`: The Bake build tool to use when running project commands (`bake` or `bake3`). Default: `"bake"`.
+- `bakeProjects.directory`: The directory under your home folder containing the `meta` folder (e.g., `"bake"` or `"bake3"`). Default: `"bake3"`.
+- `bakeProjects.ldLibraryPath`: The `LD_LIBRARY_PATH` search paths used to locate library folders when using the right-click "Open Folder" menu on libraries. Default: `""`.
+- `bakeProjects.systemLibraryPath`: System library search paths separated by colons used as fallback when locating libraries (e.g. `/usr/local/lib:/usr/lib:/lib:/usr/lib64:/lib64:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu`). Default contains standard system paths.
 
-For example, add the following to VS Code settings to use Bake3:
+### Configuration Example
+
+Add the following to your VS Code `settings.json`:
 
 ```json
-"bakeProjects.buildTool": "bake3"
+{
+  "bakeProjects.buildTool": "bake3",
+  "bakeProjects.directory": "bake3",
+  "bakeProjects.ldLibraryPath": "${workspaceFolder}/bin/x64-Linux-debug:${env:HOME}/bake3/x64-Linux/debug/lib/:/usr/local/lib/",
+  "bakeProjects.systemLibraryPath": "/usr/local/lib:/usr/lib:/lib:/usr/lib64:/lib64:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
+}
 ```
+
+### Library Folder Lookup (`bakeProjects.ldLibraryPath` & `bakeProjects.systemLibraryPath`)
+
+Right-clicking a library entry under a project's **Lib** group and selecting **Open Folder** attempts to locate the library file and open its location in your operating system's file explorer.
+
+The lookup checks paths in the following fallback order:
+
+1. `bakeProjects.ldLibraryPath` setting
+2. `LD_LIBRARY_PATH` system environment variable
+3. `LD_LIBRARY_PATH` defined in `.vscode/launch.json`
+4. `bakeProjects.systemLibraryPath` setting (system library paths)
+
+Supported path variables:
+- `${workspaceFolder}` / `${workspaceRoot}`
+- `${env:HOME}` / `${HOME}` / `$HOME` / `~`
+- `${env:VAR}` / `$VAR` / `${VAR}`
 
 ## How to use it
 

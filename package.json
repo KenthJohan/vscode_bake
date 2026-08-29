@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.44",
+  "version": "0.0.55",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -41,6 +41,16 @@
           "type": "string",
           "default": "bake3",
           "description": "The name of the Bake directory under your home directory that contains the 'meta' folder (e.g. bake or bake3)."
+        },
+        "bakeProjects.ldLibraryPath": {
+          "type": "string",
+          "default": "",
+          "description": "The LD_LIBRARY_PATH used to locate libraries (e.g. ${workspaceFolder}/bin/x64-Linux-debug:${env:HOME}/bake3/x64-Linux/debug/lib/:/usr/local/lib/)."
+        },
+        "bakeProjects.systemLibraryPath": {
+          "type": "string",
+          "default": "/usr/local/lib:/usr/lib:/lib:/usr/lib64:/lib64:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/lib/aarch64-linux-gnu:/usr/lib/arm-linux-gnueabihf:/lib/arm-linux-gnueabihf",
+          "description": "System library search paths separated by colons used as fallback when locating libraries (e.g. /usr/lib/x86_64-linux-gnu:/usr/lib)."
         }
       }
     },
@@ -70,6 +80,14 @@
       {
         "command": "bakeProjects.open",
         "title": "Open Bake Project"
+      },
+      {
+        "command": "bakeProjects.openLibraryFolder",
+        "title": "Open Folder"
+      },
+      {
+        "command": "bakeProjects.openPathInOS",
+        "title": "Open Folder in OS"
       },
       {
         "command": "bakeProjects.run",
@@ -114,6 +132,16 @@
         {
           "command": "bakeProjects.open",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "navigation"
+        },
+        {
+          "command": "bakeProjects.openLibraryFolder",
+          "when": "view == bakeProjects.explorer && viewItem == bakeLibrary",
+          "group": "navigation"
+        },
+        {
+          "command": "bakeProjects.openPathInOS",
+          "when": "view == bakeProjects.explorer && viewItem == bakeLibraryPathItem",
           "group": "navigation"
         },
         {
