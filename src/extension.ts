@@ -43,15 +43,18 @@ class BakeProject extends vscode.TreeItem {
     }
 }
 
+type BakeTreeItem = ProjectGroup | BakeProject | ProjectDetail | LibraryReference;
+
 class ProjectGroup extends vscode.TreeItem {
     public constructor(
         public readonly type: string,
-        public readonly projects: BakeProject[]
+        public readonly children: BakeTreeItem[],
+        itemLabel: string = "projects"
     ) {
         super(humanize(type), vscode.TreeItemCollapsibleState.Collapsed);
 
-        this.description = `${projects.length} ${projects.length === 1 ? "project" : "projects"}`;
-        this.tooltip = `${humanize(type)} projects`;
+        this.description = `${children.length} ${children.length === 1 ? itemLabel.slice(0, -1) : itemLabel}`;
+        this.tooltip = `${humanize(type)} ${itemLabel}`;
         this.iconPath = new vscode.ThemeIcon("symbol-namespace");
     }
 }
@@ -66,7 +69,14 @@ class ProjectDetail extends vscode.TreeItem {
     }
 }
 
-type BakeTreeItem = ProjectGroup | BakeProject | ProjectDetail;
+class LibraryReference extends vscode.TreeItem {
+    public constructor(name: string) {
+        super(name, vscode.TreeItemCollapsibleState.None);
+
+        this.tooltip = `Library: ${name}`;
+        this.iconPath = new vscode.ThemeIcon("library");
+    }
+}
 
 class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
     private readonly changeEmitter = new vscode.EventEmitter<BakeTreeItem | undefined>();
@@ -107,13 +117,15 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
 
     public async getChildren(element?: BakeTreeItem): Promise<BakeTreeItem[]> {
         if (element instanceof ProjectGroup) {
-            return element.projects;
+            return element.children;
         }
 
         if (element instanceof BakeProject) {
             const dependencies = await this.projectDependencies(element);
+            const libraries = this.projectLibraries(element);
             return [
                 ...(dependencies.length > 0 ? [new ProjectGroup("use", dependencies)] : []),
+                ...(libraries.length > 0 ? [new ProjectGroup("lib", libraries, "libraries")] : []),
                 ...projectDetails(element)
             ];
         }
@@ -192,16 +204,24 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
     }
 
     private async projectDependencies(project: BakeProject): Promise<BakeProject[]> {
-        const dependencies: BakeProject[] = [];
+        return this.projectReferences(project, projectUseIds(project.metadata));
+    }
 
-        for (const projectId of projectUseIds(project.metadata)) {
+    private projectLibraries(project: BakeProject): LibraryReference[] {
+        return [...projectLibIds(project.metadata)].map((library) => new LibraryReference(library));
+    }
+
+    private async projectReferences(project: BakeProject, projectIds: Set<string>): Promise<BakeProject[]> {
+        const references: BakeProject[] = [];
+
+        for (const projectId of projectIds) {
             if (project.dependencyChain.includes(projectId)) {
                 continue;
             }
 
             const dependency = this.projectsById.get(projectId);
             if (dependency) {
-                dependencies.push(
+                references.push(
                     new BakeProject(
                         dependency.metadataPath,
                         dependency.location,
@@ -215,7 +235,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
             }
         }
 
-        return dependencies;
+        return references;
     }
 }
 
@@ -437,6 +457,34 @@ function projectUseIds(metadata: ProjectMetadata): Set<string> {
             if (text) {
                 for (const splitValue of splitIdentifiers(text)) {
                     projectIds.add(splitValue);
+                }
+            }
+        }
+    }
+
+    return projectIds;
+}
+
+function projectLibIds(metadata: ProjectMetadata): Set<string> {
+    const projectIds = new Set<string>();
+
+    for (const [key, value] of Object.entries(metadata)) {
+        if (!key.startsWith("lang.") || !isRecord(value)) {
+            continue;
+        }
+
+        const libraries = value.lib;
+        if (typeof libraries === "string") {
+            for (const library of splitIdentifiers(libraries)) {
+                projectIds.add(library);
+            }
+        } else if (Array.isArray(libraries)) {
+            for (const library of libraries) {
+                const name = textValue(library);
+                if (name) {
+                    for (const identifier of splitIdentifiers(name)) {
+                        projectIds.add(identifier);
+                    }
                 }
             }
         }

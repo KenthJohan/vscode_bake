@@ -12,6 +12,7 @@ A VS Code extension for browsing and working with Bake projects from your local 
 - Tracks a workspace-specific current project selected from a local `project.json`
 - Highlights the current project and the transitive dependency chain used by it
 - Expands project dependencies from the `use` field and keeps walking recursively
+- Shows installed libraries listed in language-specific `lib` fields, such as `lang.c.lib`
 - Supports uninstalling a project from the extension UI
 - Refreshes the project list when the Bake metadata directory changes
 
@@ -52,6 +53,7 @@ The active project is shown with a star icon and a status label of "Active". If 
 When a current project is available, the extension reads its `use` field and follows dependencies recursively.
 
 - direct dependencies are shown when expanding a project
+- libraries configured in `lang.*.lib` are shown in a separate Lib group when installed
 - transitive dependencies are also discovered through nested `use` entries
 - dependency rows are marked with "Used by Active" in green
 - expanding a dependency continues walking its own dependencies
