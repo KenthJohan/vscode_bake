@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.57",
+  "version": "0.0.61",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -95,6 +95,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "bakeProjects.test",
+        "title": "Bake: Run Tests",
+        "icon": "$(beaker)"
+      },
+      {
         "command": "bakeProjects.buildRecursive",
         "title": "Bake: Build Recursive",
         "icon": "$(tools)"
@@ -150,24 +155,29 @@
           "group": "inline@1"
         },
         {
-          "command": "bakeProjects.buildRecursive",
-          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "command": "bakeProjects.test",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTestProjects",
           "group": "inline@2"
         },
         {
-          "command": "bakeProjects.rebuild",
+          "command": "bakeProjects.buildRecursive",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@3"
         },
         {
-          "command": "bakeProjects.rebuildRecursive",
+          "command": "bakeProjects.rebuild",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@4"
         },
         {
-          "command": "bakeProjects.uninstall",
+          "command": "bakeProjects.rebuildRecursive",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@5"
+        },
+        {
+          "command": "bakeProjects.uninstall",
+          "when": "view == bakeProjects.explorer && viewItem == bakeProject",
+          "group": "inline@6"
         }
       ],
       "explorer/context": [
