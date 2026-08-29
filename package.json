@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.39",
+  "version": "0.0.40",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -25,6 +25,20 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Bake Projects",
+      "properties": {
+        "bakeProjects.buildTool": {
+          "type": "string",
+          "enum": [
+            "bake",
+            "bake3"
+          ],
+          "default": "bake",
+          "description": "The Bake build tool to use when running project commands."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {

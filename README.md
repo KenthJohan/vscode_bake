@@ -83,6 +83,19 @@ Each command runs in a VS Code terminal using the project's filesystem location.
 
 The rebuild and uninstall actions use shell-safe quoting for the project path or identifier.
 
+### Build tool setting
+
+Use the `bakeProjects.buildTool` setting to select the command used by project actions:
+
+- `bake` (default)
+- `bake3`
+
+For example, add the following to VS Code settings to use Bake3:
+
+```json
+"bakeProjects.buildTool": "bake3"
+```
+
 ## How to use it
 
 1. Install the extension.

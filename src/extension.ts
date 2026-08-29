@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 
 const BAKE_DIRECTORY = path.join(os.homedir(), "bake");
 const BAKE_METADATA_DIRECTORY = path.join(BAKE_DIRECTORY, "meta");
+const BUILD_TOOL_CONFIGURATION_KEY = "buildTool";
 const CURRENT_PROJECT_ID_KEY = "currentProjectId";
 const CURRENT_PROJECT_PATH_KEY = "currentProjectPath";
 
@@ -600,12 +601,12 @@ export function activate(context: vscode.ExtensionContext): void {
 function runBake(project: BakeProject, arguments_: string[]): void {
     const terminal = vscode.window.createTerminal({ name: `Bake: ${project.label}` });
     terminal.show(true);
-    terminal.sendText(`bake ${arguments_.join(" ")} ${shellQuote(project.location)}`);
+    terminal.sendText(`${buildTool()} ${arguments_.join(" ")} ${shellQuote(project.location)}`);
 }
 
 function runBakeUninstall(project: BakeProject, onFinished: () => void): void {
     const projectName = project.projectId ?? project.label!.toString();
-    const commandLine = `bake uninstall ${shellQuote(projectName)}`;
+    const commandLine = `${buildTool()} uninstall ${shellQuote(projectName)}`;
     const terminal = vscode.window.createTerminal({ name: `Bake: ${project.label}` });
     terminal.show(true);
 
@@ -639,6 +640,12 @@ function runInShellIntegration(terminal: vscode.Terminal, commandLine: string, o
 
 function shellQuote(value: string): string {
     return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
+
+function buildTool(): "bake" | "bake3" {
+    return vscode.workspace.getConfiguration("bakeProjects").get<string>(BUILD_TOOL_CONFIGURATION_KEY) === "bake3"
+        ? "bake3"
+        : "bake";
 }
 
 export function deactivate(): void {}
