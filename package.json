@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.62",
+  "version": "0.0.65",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -95,6 +95,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "bakeProjects.test",
+        "title": "Bake: Run Tests",
+        "icon": "$(beaker)"
+      },
+      {
         "command": "bakeProjects.buildRecursive",
         "title": "Bake: Build Recursive",
         "icon": "$(tools)"
@@ -148,6 +153,11 @@
           "command": "bakeProjects.run",
           "when": "view == bakeProjects.explorer && viewItem == bakeProject",
           "group": "inline@1"
+        },
+        {
+          "command": "bakeProjects.test",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTests",
+          "group": "inline@2"
         },
         {
           "command": "bakeProjects.buildRecursive",

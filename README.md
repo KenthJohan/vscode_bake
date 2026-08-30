@@ -12,7 +12,8 @@ A VS Code extension for browsing and working with Bake projects from your local 
 - Tracks a workspace-specific current project selected from a local `project.json`
 - Highlights the current project and the transitive dependency chain used by it
 - Expands project dependencies from the `use` field and keeps walking recursively
-- Adds a collapsible **Subprojects** item to every project and discovers nested Bake projects
+- Adds a collapsible **Subprojects** item when nested Bake projects exist
+- Displays a **Tests** item when project metadata contains `testsuites`, listing test suites and test cases
 - Shows installed libraries listed in language-specific `lib` fields, such as `lang.c.lib`, marking missing libraries as "not found"
 - Displays root groups for **LD_LIBRARY_PATH** and **System Library Path** to inspect and open configured library directories
 - Right-click library items or library path entries to open their location in the system file explorer
@@ -32,7 +33,7 @@ Each project row displays:
 
 Project rows are grouped by type, and the active project is shown above the groups.
 
-Each project also includes a collapsible **Subprojects** item. Expanding it recursively searches the project directory for nested Bake `project.json` files and lists each discovered subproject.
+Each project row displays a collapsible **Subprojects** item if nested Bake `project.json` files exist. If `test.testsuites` is defined in `project.json`, a **Tests** item will also appear containing its test suites and test cases.
 
 ## Project location resolution
 
@@ -77,12 +78,14 @@ Each project row exposes commands in the view and inline actions:
 - Bake: Rebuild Recursive
 - Bake: Uninstall
 - Refresh Bake Projects
+- Bake: Run Tests
 
 Each command runs in a VS Code terminal using the project's filesystem location.
 
 ### Terminal commands used by the extension
 
 - `bake run <location>`
+- `bake test <location>`
 - `bake build -r <location>`
 - `bake rebuild <location>`
 - `bake rebuild -r <location>`

@@ -50,6 +50,9 @@ type BakeTreeItem =
     | ProjectGroup
     | BakeProject
     | SubprojectGroup
+    | TestGroup
+    | TestSuiteItem
+    | TestCaseItem
     | ProjectDetail
     | LibraryReference
     | LibraryPathGroup
@@ -69,11 +72,61 @@ class ProjectGroup extends vscode.TreeItem {
     }
 }
 
+class TestGroup extends vscode.TreeItem {
+    public constructor(
+        public readonly project: BakeProject,
+        public readonly children: TestSuiteItem[]
+    ) {
+        super("Tests", vscode.TreeItemCollapsibleState.Collapsed);
+
+        this.contextValue = "bakeTests";
+        this.description = `${children.length} ${children.length === 1 ? "suite" : "suites"}`;
+        this.tooltip = `Tests (${children.length} test ${children.length === 1 ? "suite" : "suites"})`;
+        this.iconPath = new vscode.ThemeIcon("beaker");
+    }
+}
+
+class TestSuiteItem extends vscode.TreeItem {
+    public constructor(
+        public readonly id: string,
+        public readonly children: TestCaseItem[]
+    ) {
+        super(
+            id,
+            children.length > 0
+                ? vscode.TreeItemCollapsibleState.Collapsed
+                : vscode.TreeItemCollapsibleState.None
+        );
+
+        this.contextValue = "bakeTestSuite";
+        this.description =
+            children.length > 0
+                ? `${children.length} ${children.length === 1 ? "testcase" : "testcases"}`
+                : undefined;
+        this.tooltip = `Test suite: ${id}${children.length > 0 ? ` (${children.length} testcases)` : ""}`;
+        this.iconPath = new vscode.ThemeIcon("symbol-class");
+    }
+}
+
+class TestCaseItem extends vscode.TreeItem {
+    public constructor(public readonly name: string) {
+        super(name, vscode.TreeItemCollapsibleState.None);
+
+        this.contextValue = "bakeTestCase";
+        this.tooltip = `Test case: ${name}`;
+        this.iconPath = new vscode.ThemeIcon("symbol-method");
+    }
+}
+
 class SubprojectGroup extends vscode.TreeItem {
-    public constructor(public readonly project: BakeProject) {
+    public constructor(
+        public readonly project: BakeProject,
+        public readonly children: BakeProject[]
+    ) {
         super("Subprojects", vscode.TreeItemCollapsibleState.Collapsed);
 
         this.contextValue = "bakeSubprojects";
+        this.description = `${children.length} ${children.length === 1 ? "project" : "projects"}`;
         this.tooltip = `Nested Bake projects in ${project.location}`;
         this.iconPath = new vscode.ThemeIcon("project");
     }
@@ -184,19 +237,24 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
     }
 
     public async getChildren(element?: BakeTreeItem): Promise<BakeTreeItem[]> {
-        if (element instanceof ProjectGroup || element instanceof LibraryPathGroup) {
+        if (
+            element instanceof ProjectGroup ||
+            element instanceof LibraryPathGroup ||
+            element instanceof TestGroup ||
+            element instanceof TestSuiteItem ||
+            element instanceof SubprojectGroup
+        ) {
             return element.children;
         }
 
-        if (element instanceof SubprojectGroup) {
-            return findSubprojects(element.project);
-        }
-
         if (element instanceof BakeProject) {
+            const subprojects = await findSubprojects(element);
+            const testSuites = parseTestSuites(element.metadata);
             const dependencies = await this.projectDependencies(element);
             const libraries = await this.projectLibraries(element);
             return [
-                new SubprojectGroup(element),
+                ...(testSuites.length > 0 ? [new TestGroup(element, testSuites)] : []),
+                ...(subprojects.length > 0 ? [new SubprojectGroup(element, subprojects)] : []),
                 ...(dependencies.length > 0 ? [new ProjectGroup("use", dependencies)] : []),
                 ...(libraries.length > 0 ? [new ProjectGroup("lib", libraries, "libraries")] : []),
                 ...projectDetails(element)
@@ -623,6 +681,42 @@ function projectLibIds(metadata: ProjectMetadata): Set<string> {
     return projectIds;
 }
 
+function parseTestSuites(metadata: ProjectMetadata): TestSuiteItem[] {
+    const test = isRecord(metadata.test) ? metadata.test : undefined;
+    if (!test) {
+        return [];
+    }
+
+    const rawSuites = Array.isArray(test.testsuites) ? test.testsuites : undefined;
+    if (!rawSuites) {
+        return [];
+    }
+
+    const suites: TestSuiteItem[] = [];
+    for (const rawSuite of rawSuites) {
+        if (isRecord(rawSuite)) {
+            const suiteId = firstText(rawSuite, ["id", "name", "title"]);
+            if (!suiteId) {
+                continue;
+            }
+
+            const rawCases = Array.isArray(rawSuite.testcases) ? rawSuite.testcases : [];
+            const testCases: TestCaseItem[] = [];
+            for (const rawCase of rawCases) {
+                const caseName = textValue(rawCase);
+                if (caseName) {
+                    testCases.push(new TestCaseItem(caseName));
+                }
+            }
+            suites.push(new TestSuiteItem(suiteId, testCases));
+        } else if (typeof rawSuite === "string" && rawSuite.trim()) {
+            suites.push(new TestSuiteItem(rawSuite.trim(), []));
+        }
+    }
+
+    return suites;
+}
+
 function collectDependencyIds(project: BakeProject, projectsById: Map<string, BakeProject>): Set<string> {
     const dependencyIds = new Set<string>();
     const visitedIds = new Set<string>();
@@ -762,6 +856,9 @@ export function activate(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand("bakeProjects.run", (project: BakeProject) =>
             runBake(project, ["run"])
+        ),
+        vscode.commands.registerCommand("bakeProjects.test", (tests: TestGroup) =>
+            runBake(tests.project, ["test"])
         ),
         vscode.commands.registerCommand("bakeProjects.buildRecursive", (project: BakeProject) =>
             runBake(project, ["build", "-r"])
