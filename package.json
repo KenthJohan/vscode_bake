@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.65",
+  "version": "0.0.68",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -86,6 +86,10 @@
         "title": "Open Folder"
       },
       {
+        "command": "bakeProjects.openTestSuiteFile",
+        "title": "Open Test Suite File"
+      },
+      {
         "command": "bakeProjects.openPathInOS",
         "title": "Open Folder in OS"
       },
@@ -98,6 +102,11 @@
         "command": "bakeProjects.test",
         "title": "Bake: Run Tests",
         "icon": "$(beaker)"
+      },
+      {
+        "command": "bakeProjects.addTestSuite",
+        "title": "Bake: Add Test Suite",
+        "icon": "$(add)"
       },
       {
         "command": "bakeProjects.buildRecursive",
@@ -145,9 +154,24 @@
           "group": "navigation"
         },
         {
+          "command": "bakeProjects.openTestSuiteFile",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTestSuite",
+          "group": "navigation"
+        },
+        {
           "command": "bakeProjects.openPathInOS",
           "when": "view == bakeProjects.explorer && viewItem == bakeLibraryPathItem",
           "group": "navigation"
+        },
+        {
+          "command": "bakeProjects.addTestSuite",
+          "when": "view == bakeProjects.explorer && (viewItem == bakeTests || viewItem == bakeProject)",
+          "group": "navigation@2"
+        },
+        {
+          "command": "bakeProjects.addTestSuite",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTests",
+          "group": "inline@1"
         },
         {
           "command": "bakeProjects.run",

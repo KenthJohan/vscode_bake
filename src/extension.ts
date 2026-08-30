@@ -89,7 +89,8 @@ class TestGroup extends vscode.TreeItem {
 class TestSuiteItem extends vscode.TreeItem {
     public constructor(
         public readonly id: string,
-        public readonly children: TestCaseItem[]
+        public readonly children: TestCaseItem[],
+        public readonly projectLocation: string
     ) {
         super(
             id,
@@ -105,6 +106,11 @@ class TestSuiteItem extends vscode.TreeItem {
                 : undefined;
         this.tooltip = `Test suite: ${id}${children.length > 0 ? ` (${children.length} testcases)` : ""}`;
         this.iconPath = new vscode.ThemeIcon("symbol-class");
+        this.command = {
+            command: "bakeProjects.openTestSuiteFile",
+            title: "Open Test Suite File",
+            arguments: [this]
+        };
     }
 }
 
@@ -249,7 +255,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
 
         if (element instanceof BakeProject) {
             const subprojects = await findSubprojects(element);
-            const testSuites = parseTestSuites(element.metadata);
+            const testSuites = parseTestSuites(element.metadata, element.location);
             const dependencies = await this.projectDependencies(element);
             const libraries = await this.projectLibraries(element);
             return [
@@ -681,7 +687,7 @@ function projectLibIds(metadata: ProjectMetadata): Set<string> {
     return projectIds;
 }
 
-function parseTestSuites(metadata: ProjectMetadata): TestSuiteItem[] {
+function parseTestSuites(metadata: ProjectMetadata, projectLocation: string): TestSuiteItem[] {
     const test = isRecord(metadata.test) ? metadata.test : undefined;
     if (!test) {
         return [];
@@ -708,9 +714,9 @@ function parseTestSuites(metadata: ProjectMetadata): TestSuiteItem[] {
                     testCases.push(new TestCaseItem(caseName));
                 }
             }
-            suites.push(new TestSuiteItem(suiteId, testCases));
+            suites.push(new TestSuiteItem(suiteId, testCases, projectLocation));
         } else if (typeof rawSuite === "string" && rawSuite.trim()) {
-            suites.push(new TestSuiteItem(rawSuite.trim(), []));
+            suites.push(new TestSuiteItem(rawSuite.trim(), [], projectLocation));
         }
     }
 
@@ -841,6 +847,11 @@ export function activate(context: vscode.ExtensionContext): void {
                 await openLibraryFolder(library);
             }
         }),
+        vscode.commands.registerCommand("bakeProjects.openTestSuiteFile", async (suiteItem?: TestSuiteItem) => {
+            if (suiteItem instanceof TestSuiteItem) {
+                await openTestSuiteFile(suiteItem);
+            }
+        }),
         vscode.commands.registerCommand("bakeProjects.openPathInOS", async (target?: string | LibraryPathItem) => {
             const targetPath = typeof target === "string" ? target : target?.dirPath;
             if (!targetPath) {
@@ -859,6 +870,9 @@ export function activate(context: vscode.ExtensionContext): void {
         ),
         vscode.commands.registerCommand("bakeProjects.test", (tests: TestGroup) =>
             runBake(tests.project, ["test"])
+        ),
+        vscode.commands.registerCommand("bakeProjects.addTestSuite", (target?: BakeProject | TestGroup) =>
+            addTestSuite(target, provider)
         ),
         vscode.commands.registerCommand("bakeProjects.buildRecursive", (project: BakeProject) =>
             runBake(project, ["build", "-r"])
@@ -1002,6 +1016,40 @@ async function openLibraryFolder(library: LibraryReference): Promise<void> {
             `None of the library directories exist. Checked paths:\n${candidateDirs.join("\n")}`
         );
     }
+}
+
+async function openTestSuiteFile(suiteItem: TestSuiteItem): Promise<void> {
+    const projectLocation = suiteItem.projectLocation;
+    const suiteId = suiteItem.id;
+    if (!projectLocation || !suiteId) {
+        return;
+    }
+
+    const srcDir = path.join(projectLocation, "src");
+    const candidates = [
+        suiteId,
+        `${suiteId}.c`,
+        `${suiteId}.cpp`,
+        `${suiteId}.cc`,
+        `${suiteId}.cxx`
+    ];
+
+    for (const candidate of candidates) {
+        const filePath = path.join(srcDir, candidate);
+        try {
+            const stat = await fs.stat(filePath);
+            if (stat.isFile()) {
+                await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(filePath));
+                return;
+            }
+        } catch {
+            // File does not exist, check next candidate
+        }
+    }
+
+    void vscode.window.showErrorMessage(
+        `Could not find source file for test suite "${suiteId}" in ${srcDir}`
+    );
 }
 
 async function getCandidateLibraryDirectories(project?: BakeProject): Promise<string[]> {
@@ -1432,6 +1480,95 @@ function isLibraryMatch(filename: string, libraryName: string): boolean {
     }
 
     return false;
+}
+
+async function addTestSuite(
+    target: BakeProject | TestGroup | undefined,
+    provider: BakeProjectsProvider
+): Promise<void> {
+    const project = target instanceof TestGroup ? target.project : target instanceof BakeProject ? target : undefined;
+    if (!project) {
+        void vscode.window.showErrorMessage("No Bake project selected.");
+        return;
+    }
+
+    const suiteId = await vscode.window.showInputBox({
+        prompt: "Enter test suite ID",
+        placeHolder: "e.g. Quaternion"
+    });
+
+    if (!suiteId || !suiteId.trim()) {
+        return;
+    }
+
+    const cleanSuiteId = suiteId.trim();
+
+    let targetJsonPath = path.join(project.location, "project.json");
+    try {
+        await fs.stat(targetJsonPath);
+    } catch {
+        targetJsonPath = path.join(project.metadataPath, "project.json");
+        try {
+            await fs.stat(targetJsonPath);
+        } catch {
+            void vscode.window.showErrorMessage(`Unable to locate project.json for project ${project.label?.toString() ?? ""}`);
+            return;
+        }
+    }
+
+    try {
+        const content = await fs.readFile(targetJsonPath, "utf8");
+        const json: Record<string, unknown> = JSON.parse(content);
+
+        if (!isRecord(json.test)) {
+            json.test = {};
+        }
+
+        const testObj = json.test as Record<string, unknown>;
+        if (!Array.isArray(testObj.testsuites)) {
+            testObj.testsuites = [];
+        }
+
+        const suitesArray = testObj.testsuites as unknown[];
+        const existing = suitesArray.some(
+            (s) => (isRecord(s) && firstText(s, ["id", "name", "title"]) === cleanSuiteId) || s === cleanSuiteId
+        );
+
+        if (existing) {
+            void vscode.window.showWarningMessage(`Test suite "${cleanSuiteId}" already exists.`);
+            return;
+        }
+
+        suitesArray.push({
+            id: cleanSuiteId,
+            setup: true,
+            testcases: []
+        });
+
+        await fs.writeFile(targetJsonPath, JSON.stringify(json, null, 4) + "\n", "utf8");
+
+        const srcDir = path.join(path.dirname(targetJsonPath), "src");
+        await fs.mkdir(srcDir, { recursive: true });
+
+        const ext = (json["lang.cpp"] || json["lang.c++"]) ? ".cpp" : ".c";
+        const fileName = cleanSuiteId.endsWith(".c") || cleanSuiteId.endsWith(".cpp") || cleanSuiteId.endsWith(".cc")
+            ? cleanSuiteId
+            : `${cleanSuiteId}${ext}`;
+        const srcFilePath = path.join(srcDir, fileName);
+
+        try {
+            await fs.stat(srcFilePath);
+        } catch {
+            const projectId = project.projectId ?? firstText(project.metadata, ["id", "name", "title", "projectName"]);
+            const fileHeader = projectId ? `#include <${projectId}.h>\n\n` : "";
+            await fs.writeFile(srcFilePath, fileHeader, "utf8");
+        }
+
+        provider.refresh();
+        void vscode.window.showInformationMessage(`Test suite "${cleanSuiteId}" added to ${project.label?.toString() ?? "project"}.`);
+    } catch (error: unknown) {
+        void vscode.window.showErrorMessage(`Unable to update project.json: ${formatError(error)}`);
+    }
 }
 
 export function deactivate(): void {}
