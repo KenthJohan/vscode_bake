@@ -49,7 +49,7 @@ class BakeProject extends vscode.TreeItem {
 type BakeTreeItem =
     | ProjectGroup
     | BakeProject
-    | TestProjectGroup
+    | SubprojectGroup
     | ProjectDetail
     | LibraryReference
     | LibraryPathGroup
@@ -69,13 +69,13 @@ class ProjectGroup extends vscode.TreeItem {
     }
 }
 
-class TestProjectGroup extends vscode.TreeItem {
+class SubprojectGroup extends vscode.TreeItem {
     public constructor(public readonly project: BakeProject) {
-        super("Tests", vscode.TreeItemCollapsibleState.Collapsed);
+        super("Subprojects", vscode.TreeItemCollapsibleState.Collapsed);
 
-        this.contextValue = "bakeTestProjects";
-        this.tooltip = `Test projects in ${path.join(project.location, "test")}`;
-        this.iconPath = new vscode.ThemeIcon("beaker");
+        this.contextValue = "bakeSubprojects";
+        this.tooltip = `Nested Bake projects in ${project.location}`;
+        this.iconPath = new vscode.ThemeIcon("project");
     }
 }
 
@@ -188,15 +188,15 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
             return element.children;
         }
 
-        if (element instanceof TestProjectGroup) {
-            return findTestProjects(element.project);
+        if (element instanceof SubprojectGroup) {
+            return findSubprojects(element.project);
         }
 
         if (element instanceof BakeProject) {
             const dependencies = await this.projectDependencies(element);
             const libraries = await this.projectLibraries(element);
             return [
-                new TestProjectGroup(element),
+                new SubprojectGroup(element),
                 ...(dependencies.length > 0 ? [new ProjectGroup("use", dependencies)] : []),
                 ...(libraries.length > 0 ? [new ProjectGroup("lib", libraries, "libraries")] : []),
                 ...projectDetails(element)
@@ -369,15 +369,17 @@ async function readProject(
     }
 }
 
-async function findTestProjects(project: BakeProject): Promise<BakeProject[]> {
-    const testDirectory = path.join(project.location, "test");
-    const tests: BakeProject[] = [];
+async function findSubprojects(project: BakeProject): Promise<BakeProject[]> {
+    const rootLocation = project.location;
+    const subprojects: BakeProject[] = [];
 
     async function visit(directory: string): Promise<void> {
-        const testProject = await readProject(directory);
-        if (testProject) {
-            tests.push(testProject);
-            return;
+        if (directory !== rootLocation) {
+            const subproject = await readProject(directory);
+            if (subproject) {
+                subprojects.push(subproject);
+                return;
+            }
         }
 
         let entries: Dirent[];
@@ -398,14 +400,14 @@ async function findTestProjects(project: BakeProject): Promise<BakeProject[]> {
     }
 
     try {
-        await visit(testDirectory);
+        await visit(rootLocation);
     } catch (error: unknown) {
         void vscode.window.showWarningMessage(
-            `Unable to read Bake tests in ${testDirectory}: ${formatError(error)}`
+            `Unable to read Bake subprojects in ${rootLocation}: ${formatError(error)}`
         );
     }
 
-    return tests.sort((left, right) => left.label!.toString().localeCompare(right.label!.toString()));
+    return subprojects.sort((left, right) => left.label!.toString().localeCompare(right.label!.toString()));
 }
 
 async function projectLocation(metadataDirectory: string, metadata: ProjectMetadata): Promise<string> {
@@ -760,9 +762,6 @@ export function activate(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand("bakeProjects.run", (project: BakeProject) =>
             runBake(project, ["run"])
-        ),
-        vscode.commands.registerCommand("bakeProjects.test", (tests: TestProjectGroup) =>
-            runBake(tests.project, ["test"])
         ),
         vscode.commands.registerCommand("bakeProjects.buildRecursive", (project: BakeProject) =>
             runBake(project, ["build", "-r"])
