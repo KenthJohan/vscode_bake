@@ -80,6 +80,8 @@ Each project row exposes commands in the view and inline actions:
 - Refresh Bake Projects
 - Bake: Run Tests
 - Bake: Add Test Suite
+- Bake: Add Test Case
+- Bake: Remove Test Suite
 
 Each command runs in a VS Code terminal using the project's filesystem location.
 

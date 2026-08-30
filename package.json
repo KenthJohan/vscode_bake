@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.68",
+  "version": "0.0.70",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -109,6 +109,16 @@
         "icon": "$(add)"
       },
       {
+        "command": "bakeProjects.addTestCase",
+        "title": "Bake: Add Test Case",
+        "icon": "$(add)"
+      },
+      {
+        "command": "bakeProjects.removeTestSuite",
+        "title": "Bake: Remove Test Suite",
+        "icon": "$(trash)"
+      },
+      {
         "command": "bakeProjects.buildRecursive",
         "title": "Bake: Build Recursive",
         "icon": "$(tools)"
@@ -157,6 +167,21 @@
           "command": "bakeProjects.openTestSuiteFile",
           "when": "view == bakeProjects.explorer && viewItem == bakeTestSuite",
           "group": "navigation"
+        },
+        {
+          "command": "bakeProjects.addTestCase",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTestSuite",
+          "group": "navigation@2"
+        },
+        {
+          "command": "bakeProjects.addTestCase",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTestSuite",
+          "group": "inline@1"
+        },
+        {
+          "command": "bakeProjects.removeTestSuite",
+          "when": "view == bakeProjects.explorer && viewItem == bakeTestSuite",
+          "group": "inline@2"
         },
         {
           "command": "bakeProjects.openPathInOS",

@@ -90,7 +90,7 @@ class TestSuiteItem extends vscode.TreeItem {
     public constructor(
         public readonly id: string,
         public readonly children: TestCaseItem[],
-        public readonly projectLocation: string
+        public readonly project: BakeProject
     ) {
         super(
             id,
@@ -111,6 +111,10 @@ class TestSuiteItem extends vscode.TreeItem {
             title: "Open Test Suite File",
             arguments: [this]
         };
+    }
+
+    public get projectLocation(): string {
+        return this.project.location;
     }
 }
 
@@ -255,7 +259,7 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
 
         if (element instanceof BakeProject) {
             const subprojects = await findSubprojects(element);
-            const testSuites = parseTestSuites(element.metadata, element.location);
+            const testSuites = parseTestSuites(element);
             const dependencies = await this.projectDependencies(element);
             const libraries = await this.projectLibraries(element);
             return [
@@ -687,8 +691,8 @@ function projectLibIds(metadata: ProjectMetadata): Set<string> {
     return projectIds;
 }
 
-function parseTestSuites(metadata: ProjectMetadata, projectLocation: string): TestSuiteItem[] {
-    const test = isRecord(metadata.test) ? metadata.test : undefined;
+function parseTestSuites(project: BakeProject): TestSuiteItem[] {
+    const test = isRecord(project.metadata.test) ? project.metadata.test : undefined;
     if (!test) {
         return [];
     }
@@ -714,9 +718,9 @@ function parseTestSuites(metadata: ProjectMetadata, projectLocation: string): Te
                     testCases.push(new TestCaseItem(caseName));
                 }
             }
-            suites.push(new TestSuiteItem(suiteId, testCases, projectLocation));
+            suites.push(new TestSuiteItem(suiteId, testCases, project));
         } else if (typeof rawSuite === "string" && rawSuite.trim()) {
-            suites.push(new TestSuiteItem(rawSuite.trim(), [], projectLocation));
+            suites.push(new TestSuiteItem(rawSuite.trim(), [], project));
         }
     }
 
@@ -873,6 +877,12 @@ export function activate(context: vscode.ExtensionContext): void {
         ),
         vscode.commands.registerCommand("bakeProjects.addTestSuite", (target?: BakeProject | TestGroup) =>
             addTestSuite(target, provider)
+        ),
+        vscode.commands.registerCommand("bakeProjects.addTestCase", (suiteItem?: TestSuiteItem) =>
+            addTestCase(suiteItem, provider)
+        ),
+        vscode.commands.registerCommand("bakeProjects.removeTestSuite", (suiteItem?: TestSuiteItem) =>
+            removeTestSuite(suiteItem, provider)
         ),
         vscode.commands.registerCommand("bakeProjects.buildRecursive", (project: BakeProject) =>
             runBake(project, ["build", "-r"])
@@ -1568,6 +1578,224 @@ async function addTestSuite(
         void vscode.window.showInformationMessage(`Test suite "${cleanSuiteId}" added to ${project.label?.toString() ?? "project"}.`);
     } catch (error: unknown) {
         void vscode.window.showErrorMessage(`Unable to update project.json: ${formatError(error)}`);
+    }
+}
+
+async function removeTestSuite(
+    suiteItem: TestSuiteItem | undefined,
+    provider: BakeProjectsProvider
+): Promise<void> {
+    if (!(suiteItem instanceof TestSuiteItem)) {
+        void vscode.window.showErrorMessage("No test suite selected.");
+        return;
+    }
+
+    const project = suiteItem.project;
+    const suiteId = suiteItem.id;
+
+    const answer = await vscode.window.showWarningMessage(
+        `Are you sure you want to remove test suite "${suiteId}" and its source file?`,
+        { modal: true },
+        "Remove"
+    );
+
+    if (answer !== "Remove") {
+        return;
+    }
+
+    let targetJsonPath = path.join(project.location, "project.json");
+    try {
+        await fs.stat(targetJsonPath);
+    } catch {
+        targetJsonPath = path.join(project.metadataPath, "project.json");
+        try {
+            await fs.stat(targetJsonPath);
+        } catch {
+            void vscode.window.showErrorMessage(`Unable to locate project.json for project ${project.label?.toString() ?? ""}`);
+            return;
+        }
+    }
+
+    try {
+        const content = await fs.readFile(targetJsonPath, "utf8");
+        const json: Record<string, unknown> = JSON.parse(content);
+
+        if (isRecord(json.test) && Array.isArray(json.test.testsuites)) {
+            const testObj = json.test as Record<string, unknown>;
+            const suitesArray = testObj.testsuites as unknown[];
+            testObj.testsuites = suitesArray.filter((s) => {
+                if (isRecord(s)) {
+                    return firstText(s, ["id", "name", "title"]) !== suiteId;
+                }
+                if (typeof s === "string") {
+                    return s.trim() !== suiteId;
+                }
+                return true;
+            });
+
+            await fs.writeFile(targetJsonPath, JSON.stringify(json, null, 4) + "\n", "utf8");
+        }
+
+        const srcDir = path.join(project.location, "src");
+        const candidates = [
+            suiteId,
+            `${suiteId}.c`,
+            `${suiteId}.cpp`,
+            `${suiteId}.cc`,
+            `${suiteId}.cxx`
+        ];
+
+        for (const candidate of candidates) {
+            const filePath = path.join(srcDir, candidate);
+            try {
+                const stat = await fs.stat(filePath);
+                if (stat.isFile()) {
+                    await fs.unlink(filePath);
+                    break;
+                }
+            } catch {
+                // File does not exist, check next candidate
+            }
+        }
+
+        provider.refresh();
+        void vscode.window.showInformationMessage(`Test suite "${suiteId}" removed.`);
+    } catch (error: unknown) {
+        void vscode.window.showErrorMessage(`Unable to remove test suite: ${formatError(error)}`);
+    }
+}
+
+async function addTestCase(
+    suiteItem: TestSuiteItem | undefined,
+    provider: BakeProjectsProvider
+): Promise<void> {
+    if (!(suiteItem instanceof TestSuiteItem)) {
+        void vscode.window.showErrorMessage("No test suite selected.");
+        return;
+    }
+
+    const project = suiteItem.project;
+    const suiteId = suiteItem.id;
+
+    const testCaseName = await vscode.window.showInputBox({
+        prompt: `Enter testcase name for suite "${suiteId}"`,
+        placeHolder: "e.g. test_identity or test1"
+    });
+
+    if (!testCaseName || !testCaseName.trim()) {
+        return;
+    }
+
+    const cleanCaseName = testCaseName.trim();
+
+    let targetJsonPath = path.join(project.location, "project.json");
+    try {
+        await fs.stat(targetJsonPath);
+    } catch {
+        targetJsonPath = path.join(project.metadataPath, "project.json");
+        try {
+            await fs.stat(targetJsonPath);
+        } catch {
+            void vscode.window.showErrorMessage(`Unable to locate project.json for project ${project.label?.toString() ?? ""}`);
+            return;
+        }
+    }
+
+    try {
+        const content = await fs.readFile(targetJsonPath, "utf8");
+        const json: Record<string, unknown> = JSON.parse(content);
+
+        if (!isRecord(json.test) || !Array.isArray(json.test.testsuites)) {
+            void vscode.window.showErrorMessage(`No testsuites found in ${targetJsonPath}`);
+            return;
+        }
+
+        const testsuites = json.test.testsuites as unknown[];
+        let targetSuite: Record<string, unknown> | undefined;
+
+        for (const s of testsuites) {
+            if (isRecord(s) && firstText(s, ["id", "name", "title"]) === suiteId) {
+                targetSuite = s;
+                break;
+            }
+        }
+
+        if (!targetSuite) {
+            void vscode.window.showErrorMessage(`Test suite "${suiteId}" not found in project.json.`);
+            return;
+        }
+
+        if (!Array.isArray(targetSuite.testcases)) {
+            targetSuite.testcases = [];
+        }
+
+        const casesArray = targetSuite.testcases as unknown[];
+        if (casesArray.some((c) => textValue(c) === cleanCaseName)) {
+            void vscode.window.showWarningMessage(`Test case "${cleanCaseName}" already exists in suite "${suiteId}".`);
+            return;
+        }
+
+        casesArray.push(cleanCaseName);
+        await fs.writeFile(targetJsonPath, JSON.stringify(json, null, 4) + "\n", "utf8");
+
+        const srcDir = path.join(path.dirname(targetJsonPath), "src");
+        await fs.mkdir(srcDir, { recursive: true });
+
+        const candidates = [
+            `${suiteId}.c`,
+            `${suiteId}.cpp`,
+            `${suiteId}.cc`,
+            `${suiteId}.cxx`,
+            suiteId
+        ];
+
+        let targetSrcPath: string | undefined;
+        for (const candidate of candidates) {
+            const candidatePath = path.join(srcDir, candidate);
+            try {
+                const stat = await fs.stat(candidatePath);
+                if (stat.isFile()) {
+                    targetSrcPath = candidatePath;
+                    break;
+                }
+            } catch {
+                // Check next candidate
+            }
+        }
+
+        if (!targetSrcPath) {
+            const ext = (json["lang.cpp"] || json["lang.c++"]) ? ".cpp" : ".c";
+            targetSrcPath = path.join(srcDir, `${suiteId}${ext}`);
+        }
+
+        const functionName = cleanCaseName.startsWith(`${suiteId}_`)
+            ? cleanCaseName
+            : `${suiteId}_${cleanCaseName}`;
+
+        let fileContent = "";
+        try {
+            fileContent = await fs.readFile(targetSrcPath, "utf8");
+        } catch {
+            const projectId = project.projectId ?? firstText(project.metadata, ["id", "name", "title", "projectName"]);
+            if (projectId) {
+                fileContent = `#include <${projectId}.h>\n\n`;
+            }
+        }
+
+        if (fileContent && !fileContent.endsWith("\n\n")) {
+            if (!fileContent.endsWith("\n")) {
+                fileContent += "\n";
+            }
+            fileContent += "\n";
+        }
+
+        fileContent += `void ${functionName}(void)\n{\n    \n}\n`;
+        await fs.writeFile(targetSrcPath, fileContent, "utf8");
+
+        provider.refresh();
+        void vscode.window.showInformationMessage(`Test case "${cleanCaseName}" added to suite "${suiteId}".`);
+    } catch (error: unknown) {
+        void vscode.window.showErrorMessage(`Unable to add test case: ${formatError(error)}`);
     }
 }
 
