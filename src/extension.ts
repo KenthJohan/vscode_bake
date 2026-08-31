@@ -1,7 +1,9 @@
 import * as fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
+import { execFile } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import * as vscode from "vscode";
 
 const BUILD_TOOL_CONFIGURATION_KEY = "buildTool";
@@ -11,6 +13,7 @@ const SYSTEM_LIBRARY_PATH_CONFIGURATION_KEY = "systemLibraryPath";
 const DEFAULT_BAKE_DIRECTORY_NAME = "bake3";
 const CURRENT_PROJECT_ID_KEY = "currentProjectId";
 const CURRENT_PROJECT_PATH_KEY = "currentProjectPath";
+const executeFile = promisify(execFile);
 
 type ProjectMetadata = Record<string, unknown>;
 
@@ -55,6 +58,7 @@ type BakeTreeItem =
     | TestCaseItem
     | ProjectDetail
     | LibraryReference
+    | LibrarySymbol
     | LibraryPathGroup
     | LibraryPathItem;
 
@@ -204,7 +208,12 @@ class LibraryReference extends vscode.TreeItem {
         public readonly exists: boolean = true,
         public readonly resolvedPath?: string
     ) {
-        super(name, vscode.TreeItemCollapsibleState.None);
+        super(
+            name,
+            resolvedPath
+                ? vscode.TreeItemCollapsibleState.Collapsed
+                : vscode.TreeItemCollapsibleState.None
+        );
 
         this.contextValue = "bakeLibrary";
         this.description = exists ? undefined : "not found";
@@ -215,6 +224,31 @@ class LibraryReference extends vscode.TreeItem {
             "library",
             exists ? undefined : new vscode.ThemeColor("testing.iconFailed")
         );
+    }
+}
+
+class LibrarySymbol extends vscode.TreeItem {
+    public constructor(
+        public readonly name: string,
+        public readonly type: string,
+        public readonly sourcePath?: string,
+        public readonly sourceLine?: number
+    ) {
+        super(name, vscode.TreeItemCollapsibleState.None);
+
+        this.contextValue = "bakeLibrarySymbol";
+        this.description = type;
+        this.tooltip = sourcePath && sourceLine
+            ? `${type} ${name}\n${sourcePath}:${sourceLine}`
+            : `${type} ${name}`;
+        this.iconPath = new vscode.ThemeIcon(librarySymbolIcon(type));
+        if (sourcePath && sourceLine) {
+            this.command = {
+                command: "bakeProjects.openLibrarySymbol",
+                title: "Open Library Symbol",
+                arguments: [this]
+            };
+        }
     }
 }
 
@@ -278,6 +312,10 @@ class BakeProjectsProvider implements vscode.TreeDataProvider<BakeTreeItem> {
                 ...(libraries.length > 0 ? [new ProjectGroup("lib", libraries, "libraries")] : []),
                 ...projectDetails(element)
             ];
+        }
+
+        if (element instanceof LibraryReference) {
+            return librarySymbols(element);
         }
 
         if (element) {
@@ -822,6 +860,50 @@ function escapeCode(value: string): string {
     return value.replace(/`/g, "\\`");
 }
 
+function librarySymbolIcon(type: string): string {
+    switch (type) {
+        case "T":
+            return "symbol-function";
+        case "U":
+            return "symbol-variable";
+        case "r":
+            return "symbol-constant";
+        default:
+            return "symbol-misc";
+    }
+}
+
+async function librarySymbols(library: LibraryReference): Promise<LibrarySymbol[]> {
+    if (!library.resolvedPath) {
+        return [];
+    }
+
+    try {
+        const { stdout } = await executeFile("nm", ["-ol", library.resolvedPath], {
+            maxBuffer: 10 * 1024 * 1024
+        });
+        return stdout
+            .split(/\r?\n/)
+            .map(parseNmSymbol)
+            .filter((symbol): symbol is LibrarySymbol => symbol !== undefined);
+    } catch (error: unknown) {
+        void vscode.window.showWarningMessage(
+            `Unable to read symbols from ${library.name}: ${formatError(error)}`
+        );
+        return [];
+    }
+}
+
+function parseNmSymbol(line: string): LibrarySymbol | undefined {
+    const match = line.match(/^.+?:[^:]+:\s*(?:[0-9a-fA-F]+)?\s*([A-Za-z?])\s+(\S+)(?:\s+(.+):(\d+))?$/);
+    if (!match) {
+        return undefined;
+    }
+
+    const [, type, name, sourcePath, lineNumber] = match;
+    return new LibrarySymbol(name, type, sourcePath, lineNumber ? Number(lineNumber) : undefined);
+}
+
 function isMissingDirectory(error: unknown): error is NodeJS.ErrnoException {
     return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT";
 }
@@ -858,6 +940,11 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand("bakeProjects.openLibraryFolder", async (library?: LibraryReference) => {
             if (library instanceof LibraryReference) {
                 await openLibraryFolder(library);
+            }
+        }),
+        vscode.commands.registerCommand("bakeProjects.openLibrarySymbol", async (symbol?: LibrarySymbol) => {
+            if (symbol instanceof LibrarySymbol) {
+                await openLibrarySymbol(symbol);
             }
         }),
         vscode.commands.registerCommand("bakeProjects.openTestSuiteFile", async (suiteItem?: TestSuiteItem) => {
@@ -1042,6 +1129,24 @@ async function openLibraryFolder(library: LibraryReference): Promise<void> {
     }
 }
 
+async function openLibrarySymbol(symbol: LibrarySymbol): Promise<void> {
+    if (!symbol.sourcePath || !symbol.sourceLine) {
+        return;
+    }
+
+    try {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(symbol.sourcePath));
+        const position = new vscode.Position(symbol.sourceLine - 1, 0);
+        await vscode.window.showTextDocument(document, {
+            selection: new vscode.Range(position, position)
+        });
+    } catch (error: unknown) {
+        void vscode.window.showErrorMessage(
+            `Unable to open source for ${symbol.name}: ${formatError(error)}`
+        );
+    }
+}
+
 async function findTestSuiteFilePath(projectLocation: string, suiteId: string): Promise<string | undefined> {
     const srcDir = path.join(projectLocation, "src");
     const candidates = [
@@ -1144,11 +1249,20 @@ async function findLibraryFile(
     dirFilesMap?: Map<string, string[]>
 ): Promise<string | undefined> {
     const expandedDirectPath = expandPath(libraryName, project);
-    try {
-        await fs.stat(expandedDirectPath);
-        return expandedDirectPath;
-    } catch {
-        // Not a direct path
+    const directPaths = new Set([
+        expandedDirectPath,
+        ...Array.from(libraryFilenameCandidates(libraryName), (filename) =>
+            path.join(path.dirname(expandedDirectPath), filename)
+        )
+    ]);
+    for (const directPath of directPaths) {
+        try {
+            if ((await fs.stat(directPath)).isFile()) {
+                return directPath;
+            }
+        } catch {
+            // Check the next direct path
+        }
     }
 
     const dirs = candidateDirs ?? (await getCandidateLibraryDirectories(project));
@@ -1168,7 +1282,10 @@ async function findLibraryFile(
 
             for (const file of files) {
                 if (isLibraryMatch(file, libraryName)) {
-                    return path.join(dir, file);
+                    const candidatePath = path.join(dir, file);
+                    if ((await fs.stat(candidatePath)).isFile()) {
+                        return candidatePath;
+                    }
                 }
             }
         } catch {
@@ -1512,26 +1629,7 @@ function isLibraryMatch(filename: string, libraryName: string): boolean {
 
     const baseName = name.replace(/\.(so|a|dylib|dll|lib)(\..*)?$/, "");
     const stem = baseName.startsWith("lib") ? baseName.slice(3) : baseName;
-
-    const candidates = new Set([
-        name,
-        `lib${name}`,
-        `${baseName}.so`,
-        `${baseName}.a`,
-        `${baseName}.dylib`,
-        `${baseName}.dll`,
-        `${baseName}.lib`,
-        `lib${baseName}.so`,
-        `lib${baseName}.a`,
-        `lib${baseName}.dylib`,
-        `lib${baseName}.dll`,
-        `lib${baseName}.lib`,
-        `${stem}.so`,
-        `${stem}.a`,
-        `lib${stem}.so`,
-        `lib${stem}.a`,
-        `lib${stem}.dylib`
-    ]);
+    const candidates = libraryFilenameCandidates(name);
 
     if (candidates.has(filename)) {
         return true;
@@ -1553,6 +1651,32 @@ function isLibraryMatch(filename: string, libraryName: string): boolean {
     }
 
     return false;
+}
+
+function libraryFilenameCandidates(libraryName: string): Set<string> {
+    const name = libraryName.trim();
+    const baseName = name.replace(/\.(so|a|dylib|dll|lib)(\..*)?$/, "");
+    const stem = baseName.startsWith("lib") ? baseName.slice(3) : baseName;
+
+    return new Set([
+        name,
+        `lib${name}`,
+        `${baseName}.so`,
+        `${baseName}.a`,
+        `${baseName}.dylib`,
+        `${baseName}.dll`,
+        `${baseName}.lib`,
+        `lib${baseName}.so`,
+        `lib${baseName}.a`,
+        `lib${baseName}.dylib`,
+        `lib${baseName}.dll`,
+        `lib${baseName}.lib`,
+        `${stem}.so`,
+        `${stem}.a`,
+        `lib${stem}.so`,
+        `lib${stem}.a`,
+        `lib${stem}.dylib`
+    ]);
 }
 
 async function addTestSuite(

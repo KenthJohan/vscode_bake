@@ -2,7 +2,7 @@
   "name": "bake-projects",
   "displayName": "Bake Projects",
   "description": "Browse Bake projects installed in your home directory.",
-  "version": "0.0.71",
+  "version": "0.0.73",
   "publisher": "bake-projects",
   "license": "MIT",
   "repository": {
@@ -84,6 +84,10 @@
       {
         "command": "bakeProjects.openLibraryFolder",
         "title": "Open Folder"
+      },
+      {
+        "command": "bakeProjects.openLibrarySymbol",
+        "title": "Open Library Symbol"
       },
       {
         "command": "bakeProjects.openTestSuiteFile",

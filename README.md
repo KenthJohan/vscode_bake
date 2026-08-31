@@ -15,6 +15,7 @@ A VS Code extension for browsing and working with Bake projects from your local 
 - Adds a collapsible **Subprojects** item when nested Bake projects exist
 - Displays a **Tests** item when project metadata contains `testsuites`, listing test suites and test cases
 - Shows installed libraries listed in language-specific `lib` fields, such as `lang.c.lib`, marking missing libraries as "not found"
+- Expands resolved library files into their symbols using `nm -ol`; clicking a symbol opens its source file at the reported line
 - Displays root groups for **LD_LIBRARY_PATH** and **System Library Path** to inspect and open configured library directories
 - Right-click library items or library path entries to open their location in the system file explorer
 - Supports uninstalling a project from the extension UI
