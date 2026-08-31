@@ -119,12 +119,21 @@ class TestSuiteItem extends vscode.TreeItem {
 }
 
 class TestCaseItem extends vscode.TreeItem {
-    public constructor(public readonly name: string) {
+    public constructor(
+        public readonly name: string,
+        public readonly suiteId: string,
+        public readonly project: BakeProject
+    ) {
         super(name, vscode.TreeItemCollapsibleState.None);
 
         this.contextValue = "bakeTestCase";
         this.tooltip = `Test case: ${name}`;
         this.iconPath = new vscode.ThemeIcon("symbol-method");
+        this.command = {
+            command: "bakeProjects.openTestCaseFile",
+            title: "Open Test Case",
+            arguments: [this]
+        };
     }
 }
 
@@ -715,7 +724,7 @@ function parseTestSuites(project: BakeProject): TestSuiteItem[] {
             for (const rawCase of rawCases) {
                 const caseName = textValue(rawCase);
                 if (caseName) {
-                    testCases.push(new TestCaseItem(caseName));
+                    testCases.push(new TestCaseItem(caseName, suiteId, project));
                 }
             }
             suites.push(new TestSuiteItem(suiteId, testCases, project));
@@ -854,6 +863,11 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand("bakeProjects.openTestSuiteFile", async (suiteItem?: TestSuiteItem) => {
             if (suiteItem instanceof TestSuiteItem) {
                 await openTestSuiteFile(suiteItem);
+            }
+        }),
+        vscode.commands.registerCommand("bakeProjects.openTestCaseFile", async (caseItem?: TestCaseItem) => {
+            if (caseItem instanceof TestCaseItem) {
+                await openTestCaseFile(caseItem);
             }
         }),
         vscode.commands.registerCommand("bakeProjects.openPathInOS", async (target?: string | LibraryPathItem) => {
@@ -1028,13 +1042,7 @@ async function openLibraryFolder(library: LibraryReference): Promise<void> {
     }
 }
 
-async function openTestSuiteFile(suiteItem: TestSuiteItem): Promise<void> {
-    const projectLocation = suiteItem.projectLocation;
-    const suiteId = suiteItem.id;
-    if (!projectLocation || !suiteId) {
-        return;
-    }
-
+async function findTestSuiteFilePath(projectLocation: string, suiteId: string): Promise<string | undefined> {
     const srcDir = path.join(projectLocation, "src");
     const candidates = [
         suiteId,
@@ -1049,17 +1057,72 @@ async function openTestSuiteFile(suiteItem: TestSuiteItem): Promise<void> {
         try {
             const stat = await fs.stat(filePath);
             if (stat.isFile()) {
-                await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(filePath));
-                return;
+                return filePath;
             }
         } catch {
             // File does not exist, check next candidate
         }
     }
 
+    return undefined;
+}
+
+async function openTestSuiteFile(suiteItem: TestSuiteItem): Promise<void> {
+    const projectLocation = suiteItem.projectLocation;
+    const suiteId = suiteItem.id;
+    if (!projectLocation || !suiteId) {
+        return;
+    }
+
+    const filePath = await findTestSuiteFilePath(projectLocation, suiteId);
+    if (filePath) {
+        await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(filePath));
+        return;
+    }
+
     void vscode.window.showErrorMessage(
-        `Could not find source file for test suite "${suiteId}" in ${srcDir}`
+        `Could not find source file for test suite "${suiteId}" in ${path.join(projectLocation, "src")}`
     );
+}
+
+async function openTestCaseFile(caseItem: TestCaseItem): Promise<void> {
+    const projectLocation = caseItem.project.location;
+    const suiteId = caseItem.suiteId;
+    const caseName = caseItem.name;
+    if (!projectLocation || !suiteId || !caseName) {
+        return;
+    }
+
+    const filePath = await findTestSuiteFilePath(projectLocation, suiteId);
+    if (!filePath) {
+        void vscode.window.showErrorMessage(
+            `Could not find source file for test suite "${suiteId}" in ${path.join(projectLocation, "src")}`
+        );
+        return;
+    }
+
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    const editor = await vscode.window.showTextDocument(document);
+
+    const functionName = `${suiteId}_${caseName}`;
+    const functionPattern = new RegExp(`\\b${escapeRegExp(functionName)}\\s*\\(`);
+    const text = document.getText();
+    const match = functionPattern.exec(text);
+    if (match) {
+        const startPos = document.positionAt(match.index);
+        const endPos = document.positionAt(match.index + match[0].length - 1);
+        const range = new vscode.Range(startPos, endPos);
+        editor.selection = new vscode.Selection(startPos, endPos);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+    } else {
+        void vscode.window.showWarningMessage(
+            `Could not find function "${functionName}" in ${filePath}`
+        );
+    }
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function getCandidateLibraryDirectories(project?: BakeProject): Promise<string[]> {
